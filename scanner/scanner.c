@@ -33,12 +33,13 @@ Environment:
 //  Structure that contains all the global data structures
 //  used throughout the scanner.
 //
-
+RTL_AVL_TABLE g_avl_table;
 SCANNER_DATA ScannerData;
-RTL_AVL_TABLE g_avl_table = { 0 };
+
 //
 //  This is a static list of file name extensions files we are interested in scanning
 //
+
 
 const UNICODE_STRING ScannerExtensionsToScan[] =
 { RTL_CONSTANT_STRING(L"doc"),
@@ -160,16 +161,11 @@ const FLT_REGISTRATION FilterRegistration = {
 
 typedef struct _AV_GENERIC_TABLE_ENTRY {
 
-	AV_FILE_REFERENCE FileId;
-	ULONG      InfectedState;
-
-	//
-	// Revision numbers for files on CSVFS
-	//
-	LONGLONG   VolumeRevision;
-	LONGLONG   CacheRevision;
-	LONGLONG   FileRevision;
-
+    HANDLE hHanle;  //文件句柄
+    ULONG dw_Pid;   //进程PID
+    ULONG option;   //打开的方式
+    WCHAR Path[280];//文件路径       
+    BOOLEAN IsOpen; //保存结果
 } AV_GENERIC_TABLE_ENTRY, *PAV_GENERIC_TABLE_ENTRY;
 
 RTL_GENERIC_COMPARE_RESULTS
@@ -214,25 +210,25 @@ Return Value:
 	//  here since we just need the tree to be self-consistent.
 	//
 
-	if (lhs->FileId.FileId64.Value < rhs->FileId.FileId64.Value) {
+	if (lhs->dw_Pid < rhs->dw_Pid) {
 
 		return GenericLessThan;
 
 	}
-	else if (lhs->FileId.FileId64.Value > rhs->FileId.FileId64.Value) {
+	else if (lhs->dw_Pid > rhs->dw_Pid) {
 
 		return GenericGreaterThan;
 
 	}
-	else if (lhs->FileId.FileId64.UpperZeroes < rhs->FileId.FileId64.UpperZeroes) {
+    else if (lhs->option < rhs->option) {
 
-		return GenericLessThan;
+        return GenericLessThan;
 
-	}
-	else if (lhs->FileId.FileId64.UpperZeroes > rhs->FileId.FileId64.UpperZeroes) {
+    }
+    else if (lhs->option > rhs->option) {
 
-		return GenericGreaterThan;
-	}
+        return GenericGreaterThan;
+    }
 
 	return GenericEqual;
 }
@@ -264,7 +260,7 @@ Return Value:
 
 	UNREFERENCED_PARAMETER(Table);
 
-	return ExAllocatePoolWithTag(PagedPool, ByteSize, AV_TABLE_ENTRY_TAG);
+	return ExAllocatePoolWithTag(NonPagedPool, ByteSize, 'lwla');
 }
 
 VOID
@@ -295,7 +291,7 @@ Return Value:
 
 	UNREFERENCED_PARAMETER(Table);
 
-	ExFreePoolWithTag(Entry, AV_TABLE_ENTRY_TAG);
+	ExFreePoolWithTag(Entry, 'lwla');
 }
 
 
@@ -337,7 +333,8 @@ Return Value:
 	NTSTATUS status;
 
 	UNREFERENCED_PARAMETER(RegistryPath);
-	RtlInitializeGenericTableAvl(&g_avl_table,)
+  
+    RtlInitializeGenericTableAvl((PRTL_AVL_TABLE)&g_avl_table, AvCompareEntry, AvAllocateGenericTableEntry, AvFreeGenericTableEntry, NULL);
 	//
 	//  Register with filter manager.
 	//
@@ -783,6 +780,7 @@ Return Value:
 	ULONG ulOption = Data->Iopb->Parameters.Create.Options;
 	FILE_DISPOSITION_INFORMATION  fdi;
 	ULONG ulDisposition;
+    AV_GENERIC_TABLE_ENTRY entry = { 0 };
 	PopWindow = FALSE;
 	UNREFERENCED_PARAMETER(CompletionContext);
 	UNREFERENCED_PARAMETER(Flags);
@@ -837,7 +835,9 @@ Return Value:
 
 
 	scanFile = ScannerpCheckExtension(&nameInfo->Extension);
-
+    //获取文件的句柄之类的填入二叉树表
+    //获取文件句柄
+    
 	//
 	//  Release file name info, we're done with it
 	//
