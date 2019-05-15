@@ -156,6 +156,149 @@ const FLT_REGISTRATION FilterRegistration = {
 	NULL                                //  NormalizeNameComponent
 };
 
+//二叉树回调函数
+
+typedef struct _AV_GENERIC_TABLE_ENTRY {
+
+	AV_FILE_REFERENCE FileId;
+	ULONG      InfectedState;
+
+	//
+	// Revision numbers for files on CSVFS
+	//
+	LONGLONG   VolumeRevision;
+	LONGLONG   CacheRevision;
+	LONGLONG   FileRevision;
+
+} AV_GENERIC_TABLE_ENTRY, *PAV_GENERIC_TABLE_ENTRY;
+
+RTL_GENERIC_COMPARE_RESULTS
+NTAPI
+AvCompareEntry(
+	_In_ PRTL_AVL_TABLE Table,
+	_In_ PVOID Lhs,
+	_In_ PVOID Rhs
+)
+/*++
+
+Routine Description:
+
+	This routine is the callback for the generic table routines.
+
+Arguments:
+
+	Table       - Table for which this is invoked.
+
+	FirstStruct - An element in the table to compare.
+
+	SecondStruct - Another element in the table to compare.
+
+Return Value:
+
+	RTL_GENERIC_COMPARE_RESULTS.
+
+--*/
+{
+	PAV_GENERIC_TABLE_ENTRY lhs = (PAV_GENERIC_TABLE_ENTRY)Lhs;
+	PAV_GENERIC_TABLE_ENTRY rhs = (PAV_GENERIC_TABLE_ENTRY)Rhs;
+
+	UNREFERENCED_PARAMETER(Table);
+
+	//
+	//  Compare the 128 bit fileId in 64bit pieces for efficiency.
+	//  Compare the lower 64 bits Value first since that is used
+	//  in both 128 bit and 64 bit fileIds and doing so eliminates
+	//  and unnecessary comparison of the UpperZeros field in the
+	//  most common case. Note this comparison is not equivalent
+	//  to a memcmp on the 128 bit values but that doesn't matter
+	//  here since we just need the tree to be self-consistent.
+	//
+
+	if (lhs->FileId.FileId64.Value < rhs->FileId.FileId64.Value) {
+
+		return GenericLessThan;
+
+	}
+	else if (lhs->FileId.FileId64.Value > rhs->FileId.FileId64.Value) {
+
+		return GenericGreaterThan;
+
+	}
+	else if (lhs->FileId.FileId64.UpperZeroes < rhs->FileId.FileId64.UpperZeroes) {
+
+		return GenericLessThan;
+
+	}
+	else if (lhs->FileId.FileId64.UpperZeroes > rhs->FileId.FileId64.UpperZeroes) {
+
+		return GenericGreaterThan;
+	}
+
+	return GenericEqual;
+}
+
+PVOID
+NTAPI
+AvAllocateGenericTableEntry(
+	_In_ PRTL_GENERIC_TABLE Table,
+	_In_ CLONG ByteSize
+)
+/*++
+
+Routine Description:
+
+	This routine is the callback for allocation for entries in the generic table.
+
+Arguments:
+
+	Table       - Table for which this is invoked.
+
+	ByteSize    - Amount of memory to allocate.
+
+Return Value:
+
+	Pointer to allocated memory if successful, else NULL.
+
+--*/
+{
+
+	UNREFERENCED_PARAMETER(Table);
+
+	return ExAllocatePoolWithTag(PagedPool, ByteSize, AV_TABLE_ENTRY_TAG);
+}
+
+VOID
+NTAPI
+AvFreeGenericTableEntry(
+	_In_ PRTL_GENERIC_TABLE Table,
+	_In_ __drv_freesMem(Mem) _Post_invalid_ PVOID Entry
+)
+/*++
+
+Routine Description:
+
+	This routine is the callback for releasing memory for entries in the generic
+	table.
+
+Arguments:
+
+	Table       - Table for which this is invoked.
+
+	Entry       - Entry to free.
+
+Return Value:
+
+	None.
+
+--*/
+{
+
+	UNREFERENCED_PARAMETER(Table);
+
+	ExFreePoolWithTag(Entry, AV_TABLE_ENTRY_TAG);
+}
+
+
 ////////////////////////////////////////////////////////////////////////////
 //
 //    Filter initialization and unload routines.
@@ -194,7 +337,7 @@ Return Value:
 	NTSTATUS status;
 
 	UNREFERENCED_PARAMETER(RegistryPath);
-
+	RtlInitializeGenericTableAvl(&g_avl_table,)
 	//
 	//  Register with filter manager.
 	//
