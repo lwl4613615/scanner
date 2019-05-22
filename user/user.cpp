@@ -200,11 +200,18 @@ Return Value
 		__analysis_assume(notification->BytesToScan <= SCANNER_READ_BUFFER_SIZE);
 		printf("option: %d\n", notification->Option);
 
-		_getch();
 		
-		//这个地方，可以修改成弹窗的代码:result=PopupWindow(notification);
-		result = ScanBuffer(notification->Contents, notification->BytesToScan);
+		if (notification->Option==1)
+		{
+			printf("ProcessPath:%s \n ", notification->ProcessPath);
+			printf("FilePath:%s \n", notification->FilePath);
+		}
+		else
+		{
 
+			//这个地方，可以修改成弹窗的代码:result=PopupWindow(notification);
+			result = ScanBuffer(notification->Contents, notification->BytesToScan);
+		}
 		replyMessage.ReplyHeader.Status = 0;
 		replyMessage.ReplyHeader.MessageId = message->MessageHeader.MessageId;
 

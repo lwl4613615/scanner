@@ -40,6 +40,15 @@ SCANNER_DATA ScannerData;
 //
 //  This is a static list of file name extensions files we are interested in scanning
 //
+typedef struct _AV_GENERIC_TABLE_ENTRY {
+
+	HANDLE hFile;  //文件句柄
+	ULONG dw_Pid;   //进程PID
+	ULONG option;   //打开的方式
+	WCHAR ProcessPath[MAX_PATH]; //进程路径
+	WCHAR FilePath[MAX_PATH];    //文件路径       
+	BOOLEAN IsOpen; //保存结果
+} AV_GENERIC_TABLE_ENTRY, *PAV_GENERIC_TABLE_ENTRY;
 
 
 const UNICODE_STRING ScannerExtensionsToScan[] =
@@ -79,10 +88,8 @@ ScannerpScanFileInUserMode(
 );
 NTSTATUS
 ScannerpSendMessageInUserMode(
-	__in PFLT_CALLBACK_DATA Data,
 	__in PFLT_INSTANCE Instance,
-	__in PFILE_OBJECT FileObject,
-	__in ULONG Option,
+	__in AV_GENERIC_TABLE_ENTRY entry,	
 	__out PBOOLEAN SafeToOpen
 );
 BOOLEAN
@@ -160,15 +167,6 @@ const FLT_REGISTRATION FilterRegistration = {
 
 //二叉树回调函数
 
-typedef struct _AV_GENERIC_TABLE_ENTRY {
-
-    HANDLE hFile;  //文件句柄
-    ULONG dw_Pid;   //进程PID
-    ULONG option;   //打开的方式
-	WCHAR ProcessPath[MAX_PATH]; //进程路径
-    WCHAR FilePath[MAX_PATH];    //文件路径       
-    BOOLEAN IsOpen; //保存结果
-} AV_GENERIC_TABLE_ENTRY, *PAV_GENERIC_TABLE_ENTRY;
 
 RTL_GENERIC_COMPARE_RESULTS
 NTAPI
@@ -879,7 +877,7 @@ Return Value:
 	if (PopWindow)
 	{
 		//需要弹窗就是创建操作,1为创建操作
-		(VOID)ScannerpSendMessageInUserMode(Data,FltObjects->Instance,FltObjects->FileObject,1,&safeToOpen);
+		(VOID)ScannerpSendMessageInUserMode(FltObjects->Instance,entry,&safeToOpen);
 	}
 	else
 	{
@@ -1439,12 +1437,10 @@ Return Value:
 #pragma warning(disable:4101)
 NTSTATUS
 ScannerpSendMessageInUserMode(
-	__in PFLT_CALLBACK_DATA Data,
 	__in PFLT_INSTANCE Instance,
-	__in PFILE_OBJECT FileObject,
-	__in ULONG Option,
+	__in AV_GENERIC_TABLE_ENTRY entry,
 	__out PBOOLEAN SafeToOpen
-) {
+){
 	NTSTATUS status = STATUS_SUCCESS;
 	PVOID buffer = NULL;
 	ULONG bytesRead;
@@ -1477,7 +1473,7 @@ ScannerpSendMessageInUserMode(
 			leave;
 		}
 		//填写这个结构体
-		switch (Option)
+		switch (entry.option)
 		{
 		case 2:
 		{
@@ -1500,6 +1496,8 @@ ScannerpSendMessageInUserMode(
 		//
 
 		notification->Option = 1;
+		wcsncpy(notification->ProcessPath, entry.ProcessPath, MAX_PATH);
+		wcsncpy(notification->FilePath, entry.FilePath, MAX_PATH);
 		status = FltSendMessage(ScannerData.Filter,
 			&ScannerData.ClientPort,
 			notification,//request
