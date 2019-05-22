@@ -25,7 +25,7 @@ Environment:
 //  Name of port used to communicate
 //
 
-const PWSTR ScannerPortName = L"\\ScannerPort";
+const wchar_t* ScannerPortName = L"\\ScannerPort";
 
 
 #define SCANNER_READ_BUFFER_SIZE   1024

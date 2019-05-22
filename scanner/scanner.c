@@ -18,13 +18,14 @@ Environment:
 	Kernel mode
 
 --*/
-
+#define RTL_USE_AVL_TABLES 0
 #include <fltKernel.h>
 #include <dontuse.h>
 #include <suppress.h>
 #include "..\\inc\\scanuk.h"
 #include "scanner.h"
 #include "misc.h"
+
 #include <ntddk.h>
 
 #pragma prefast(disable:__WARNING_ENCODE_MEMBER_FUNCTION_POINTER, "Not valid for kernel mode drivers")
@@ -161,10 +162,11 @@ const FLT_REGISTRATION FilterRegistration = {
 
 typedef struct _AV_GENERIC_TABLE_ENTRY {
 
-    HANDLE hHanle;  //文件句柄
+    HANDLE hFile;  //文件句柄
     ULONG dw_Pid;   //进程PID
     ULONG option;   //打开的方式
-    WCHAR Path[280];//文件路径       
+	WCHAR ProcessPath[MAX_PATH]; //进程路径
+    WCHAR FilePath[MAX_PATH];    //文件路径       
     BOOLEAN IsOpen; //保存结果
 } AV_GENERIC_TABLE_ENTRY, *PAV_GENERIC_TABLE_ENTRY;
 
@@ -229,7 +231,14 @@ Return Value:
 
         return GenericGreaterThan;
     }
-
+	else if ((int)lhs->hFile > (int)rhs->hFile)
+	{
+		return GenericGreaterThan;
+	}
+	else if ((int)lhs->hFile < (int)rhs->hFile)
+	{
+		return GenericLessThan;
+	}
 	return GenericEqual;
 }
 
@@ -333,8 +342,8 @@ Return Value:
 	NTSTATUS status;
 
 	UNREFERENCED_PARAMETER(RegistryPath);
-  
-    RtlInitializeGenericTableAvl((PRTL_AVL_TABLE)&g_avl_table, AvCompareEntry, AvAllocateGenericTableEntry, AvFreeGenericTableEntry, NULL);
+
+    RtlInitializeGenericTableAvl(&g_avl_table, AvCompareEntry, AvAllocateGenericTableEntry, AvFreeGenericTableEntry, NULL);
 	//
 	//  Register with filter manager.
 	//
@@ -835,14 +844,13 @@ Return Value:
 
 
 	scanFile = ScannerpCheckExtension(&nameInfo->Extension);
-    //获取文件的句柄之类的填入二叉树表
-    //获取文件句柄
+    
     
 	//
 	//  Release file name info, we're done with it
 	//
 
-	FltReleaseFileNameInformation(nameInfo);
+	
 
 	if (!scanFile) {
 
@@ -856,7 +864,18 @@ Return Value:
 	//进行数据流的判断，或者对它的MD5，甚至加解密操作。
 
 	//需要判断如果是创建操作，就不进行打开文件，扫描。如果不是创建操作，就进行MD5等查询方法，判断是它是不是一个有问题的文件。
+		//创建打开文件，重命名文件都有的操作
+		//获取进程的路径，
+	UNICODE_STRING us_ProcessPath = { 0 };
+	us_ProcessPath.Buffer = entry.ProcessPath;
+	us_ProcessPath.MaximumLength = sizeof(entry.ProcessPath);
+	GetProcessFullNameByPid(PsGetCurrentProcessId(), &us_ProcessPath);
+	DbgPrint("Process Path: %ws \n", entry.ProcessPath);
+	//获取文件的名称
 	
+	wcsncpy(entry.FilePath, nameInfo->Name.Buffer,MAX_PATH);
+	DbgPrint("File Path:%ws \n", entry.FilePath);
+	FltReleaseFileNameInformation(nameInfo);
 	if (PopWindow)
 	{
 		//需要弹窗就是创建操作,1为创建操作
@@ -1415,7 +1434,9 @@ Return Value:
 
 	return status;
 }
-
+#pragma warning(push)
+#pragma warning(disable:4100)
+#pragma warning(disable:4101)
 NTSTATUS
 ScannerpSendMessageInUserMode(
 	__in PFLT_CALLBACK_DATA Data,
@@ -1428,11 +1449,10 @@ ScannerpSendMessageInUserMode(
 	PVOID buffer = NULL;
 	ULONG bytesRead;
 	PSCANNER_NOTIFICATION notification = NULL;
-	FLT_VOLUME_PROPERTIES volumeProps;
+	
 	LARGE_INTEGER offset;
 	ULONG replyLength, length;
-	PFLT_VOLUME volume = NULL;
-	UNICODE_STRING us_Path = {0};
+	
 	*SafeToOpen = TRUE;
 
 	//
@@ -1472,22 +1492,14 @@ ScannerpSendMessageInUserMode(
 			break; 
 		}
 
-		//创建打开文件，重命名文件都有的操作
-		//获取进程的路径，
-		us_Path.Buffer = notification->ProcessPath;
-		us_Path.MaximumLength = sizeof(notification->ProcessPath);
-		GetProcessFullNameByPid(FltGetRequestorProcess(Data),&us_Path);
-		DbgPrint("Path Name: %wZ\n", &us_Path);
-		//获取文件的名称
-		us_Path.Buffer = notification->FilePath;
-		us_Path.MaximumLength = sizeof(notification->FilePath);
+	
 
 
 		//
 		//  Read the beginning of the file and pass the contents to user mode.
 		//
 
-
+		notification->Option = 1;
 		status = FltSendMessage(ScannerData.Filter,
 			&ScannerData.ClientPort,
 			notification,//request
@@ -1523,12 +1535,9 @@ ScannerpSendMessageInUserMode(
 
 		 ExFreePoolWithTag(notification, 'nacS');
 	 }
-
-	 if (NULL != volume) {
-
-		 FltObjectDereference(volume);
-	 }
+	 
 	}
 
 	return status;
 };
+#pragma warning(pop)
