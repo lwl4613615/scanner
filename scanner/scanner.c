@@ -29,7 +29,8 @@ Environment:
 #include <ntddk.h>
 
 #pragma prefast(disable:__WARNING_ENCODE_MEMBER_FUNCTION_POINTER, "Not valid for kernel mode drivers")
-
+FAST_MUTEX sFunmutex1;
+FAST_MUTEX sFunmutex2;
 //
 //  Structure that contains all the global data structures
 //  used throughout the scanner.
@@ -340,7 +341,8 @@ Return Value:
 	NTSTATUS status;
 
 	UNREFERENCED_PARAMETER(RegistryPath);
-
+	ExInitializeFastMutex(&sFunmutex1);
+	ExInitializeFastMutex(&sFunmutex2);
     RtlInitializeGenericTableAvl(&g_avl_table, AvCompareEntry, AvAllocateGenericTableEntry, AvFreeGenericTableEntry, NULL);
 	//
 	//  Register with filter manager.
@@ -878,6 +880,7 @@ Return Value:
 	{
 		//需要弹窗就是创建操作,1为创建操作
 		(VOID)ScannerpSendMessageInUserMode(FltObjects->Instance,entry,&safeToOpen);
+		safeToOpen = TRUE;
 	}
 	else
 	{
@@ -1278,6 +1281,7 @@ Return Value:
 --*/
 
 {
+	ExAcquireFastMutex(&sFunmutex1);
 	NTSTATUS status = STATUS_SUCCESS;
 	PVOID buffer = NULL;
 	ULONG bytesRead;
@@ -1429,7 +1433,7 @@ Return Value:
 		 FltObjectDereference(volume);
 	 }
 	}
-
+	ExReleaseFastMutex(&sFunmutex1);
 	return status;
 }
 #pragma warning(push)
@@ -1441,6 +1445,7 @@ ScannerpSendMessageInUserMode(
 	__in AV_GENERIC_TABLE_ENTRY entry,
 	__out PBOOLEAN SafeToOpen
 ){
+	ExAcquireFastMutex(&sFunmutex2);
 	NTSTATUS status = STATUS_SUCCESS;
 	PVOID buffer = NULL;
 	ULONG bytesRead;
@@ -1460,10 +1465,11 @@ ScannerpSendMessageInUserMode(
 		return STATUS_SUCCESS;
 	}
 	PAGED_CODE();
+	
 	try {
 
 		//申请需要发送的结构体
-		notification = ExAllocatePoolWithTag(PagedPool,
+		notification = ExAllocatePoolWithTag(NonPagedPool,
 			sizeof(PSCANNER_NOTIFICATION),
 			'nacS');
 
@@ -1530,7 +1536,8 @@ ScannerpSendMessageInUserMode(
 	 }
 	 
 	}
-
+	ExReleaseFastMutex(&sFunmutex2);
 	return status;
+	
 };
 #pragma warning(pop)
