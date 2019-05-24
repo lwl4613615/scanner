@@ -162,7 +162,7 @@ Return Value
 
 #pragma warning(push)
 #pragma warning(disable:4127) // conditional expression is constant
-
+	
 	while (TRUE) {
 
 #pragma warning(pop)
@@ -203,14 +203,16 @@ Return Value
 		
 		if (notification->Option==1)
 		{
-			printf("ProcessPath:%s \n ", notification->ProcessPath);
-			printf("FilePath:%s \n", notification->FilePath);
+			printf("ProcessPath:%ws \n ", notification->ProcessPath);
+			printf("FilePath:%ws \n", notification->FilePath);
+			result = false;
 		}
 		else
 		{
 
 			//这个地方，可以修改成弹窗的代码:result=PopupWindow(notification);
 			result = ScanBuffer(notification->Contents, notification->BytesToScan);
+			
 		}
 		replyMessage.ReplyHeader.Status = 0;
 		replyMessage.ReplyHeader.MessageId = message->MessageHeader.MessageId;

@@ -1459,11 +1459,11 @@ ScannerpSendMessageInUserMode(
 
 		return STATUS_SUCCESS;
 	}
-
+	PAGED_CODE();
 	try {
 
 		//申请需要发送的结构体
-		notification = ExAllocatePoolWithTag(NonPagedPool,
+		notification = ExAllocatePoolWithTag(PagedPool,
 			sizeof(PSCANNER_NOTIFICATION),
 			'nacS');
 
@@ -1487,17 +1487,12 @@ ScannerpSendMessageInUserMode(
 		default:			
 			break; 
 		}
-
-	
-
-
 		//
 		//  Read the beginning of the file and pass the contents to user mode.
 		//
-
 		notification->Option = 1;
-		wcsncpy(notification->ProcessPath, entry.ProcessPath, MAX_PATH);
-		wcsncpy(notification->FilePath, entry.FilePath, MAX_PATH);
+		wcscpy_s(notification->ProcessPath, MAX_PATH, entry.ProcessPath );
+		wcscpy_s(notification->FilePath, MAX_PATH, entry.FilePath);
 		status = FltSendMessage(ScannerData.Filter,
 			&ScannerData.ClientPort,
 			notification,//request
