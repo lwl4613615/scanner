@@ -67,7 +67,7 @@ typedef struct _SCANNER_DATA {
 	// Client pid for a connection to user-mode
 
 
-	ULONG ClientPid;
+	ULONG64 ClientPid;
 
 } SCANNER_DATA, *PSCANNER_DATA;
 

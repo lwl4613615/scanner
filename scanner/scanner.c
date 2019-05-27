@@ -31,6 +31,9 @@ Environment:
 #pragma prefast(disable:__WARNING_ENCODE_MEMBER_FUNCTION_POINTER, "Not valid for kernel mode drivers")
 FAST_MUTEX sFunmutex1;
 FAST_MUTEX sFunmutex2;
+FAST_MUTEX WriteMutex;
+ERESOURCE writelock;
+
 //
 //  Structure that contains all the global data structures
 //  used throughout the scanner.
@@ -51,7 +54,7 @@ typedef struct _AV_GENERIC_TABLE_ENTRY {
 	BOOLEAN IsOpen; //保存结果
 } AV_GENERIC_TABLE_ENTRY, *PAV_GENERIC_TABLE_ENTRY;
 
-
+PAV_GENERIC_TABLE_ENTRY p;
 const UNICODE_STRING ScannerExtensionsToScan[] =
 { RTL_CONSTANT_STRING(L"doc"),
   RTL_CONSTANT_STRING(L"txt"),
@@ -230,11 +233,11 @@ Return Value:
 
         return GenericGreaterThan;
     }
-	else if ((int)lhs->hFile > (int)rhs->hFile)
+	else if ((ULONG64)lhs->hFile > (ULONG64)rhs->hFile)
 	{
 		return GenericGreaterThan;
 	}
-	else if ((int)lhs->hFile < (int)rhs->hFile)
+	else if ((ULONG64)lhs->hFile < (ULONG64)rhs->hFile)
 	{
 		return GenericLessThan;
 	}
@@ -343,7 +346,9 @@ Return Value:
 	UNREFERENCED_PARAMETER(RegistryPath);
 	ExInitializeFastMutex(&sFunmutex1);
 	ExInitializeFastMutex(&sFunmutex2);
-    RtlInitializeGenericTableAvl(&g_avl_table, AvCompareEntry, AvAllocateGenericTableEntry, AvFreeGenericTableEntry, NULL);
+	ExInitializeFastMutex(&WriteMutex);
+	ExInitializeResourceLite(&writelock);
+	RtlInitializeGenericTableAvl(&g_avl_table, AvCompareEntry, AvAllocateGenericTableEntry, AvFreeGenericTableEntry, NULL);
 	//
 	//  Register with filter manager.
 	//
@@ -468,7 +473,7 @@ Return Value
 
 	ScannerData.UserProcess = PsGetCurrentProcess();
 	ScannerData.ClientPort = ClientPort;
-	ScannerData.ClientPid = (ULONG)PsGetCurrentProcessId();
+	ScannerData.ClientPid = (ULONG64)PsGetCurrentProcessId();
 	DbgPrint("!!! scanner.sys --- connected, port=0x%p  PID=%d\n ", ClientPort, ScannerData.ClientPid);
 
 	return STATUS_SUCCESS;
@@ -550,7 +555,7 @@ Return Value:
 	//
 
 	FltUnregisterFilter(ScannerData.Filter);
-
+	ExDeleteResourceLite(&writelock);
 	return STATUS_SUCCESS;
 }
 
@@ -745,7 +750,13 @@ Return Value
 
 	return FALSE;
 }
-
+//寻找节点
+void FindAvlTable(PVOID StartContext)
+{
+	ExAcquireResourceSharedLite(&writelock, TRUE);
+	p= RtlLookupElementGenericTableAvl(&g_avl_table, (HANDLE)StartContext);
+	ExReleaseResourceLite(&writelock);
+}
 
 FLT_POSTOP_CALLBACK_STATUS
 ScannerPostCreate(
@@ -812,7 +823,26 @@ Return Value:
 	{
 		return FLT_POSTOP_FINISHED_PROCESSING;
 	}
-
+	//查询链表
+	HANDLE hThread = NULL;
+	PVOID obj;
+	status = PsCreateSystemThread(&hThread, THREAD_ALL_ACCESS, NULL, NULL, NULL,FindAvlTable , FltObjects->FileObject);
+	if (!NT_SUCCESS(status))
+	{
+		DbgPrint("Create Thread error!");
+	}
+	status = ObReferenceObjectByHandle(hThread, THREAD_ALL_ACCESS, NULL, KernelMode, &obj, NULL);
+	KeWaitForSingleObject(obj, Executive, KernelMode, FALSE, NULL);
+	
+	if (p!=NULL)
+	{
+		safeToOpen = p->IsOpen;
+		ExAcquireResourceExclusiveLite(&writelock, TRUE);
+		p = NULL;
+		ExReleaseResourceLite(&writelock);
+		goto deal;
+		
+	}
 	//
 	//  Check if we are interested in this file.
 	//
@@ -872,15 +902,16 @@ Return Value:
 	GetProcessFullNameByPid(PsGetCurrentProcessId(), &us_ProcessPath);
 	DbgPrint("Process Path: %ws \n", entry.ProcessPath);
 	//获取文件的名称
-	
 	wcsncpy(entry.FilePath, nameInfo->Name.Buffer,MAX_PATH);
+	entry.hFile = FltObjects->FileObject;
 	DbgPrint("File Path:%ws \n", entry.FilePath);
+	
 	FltReleaseFileNameInformation(nameInfo);
 	if (PopWindow)
 	{
 		//需要弹窗就是创建操作,1为创建操作
 		(VOID)ScannerpSendMessageInUserMode(FltObjects->Instance,entry,&safeToOpen);
-		safeToOpen = TRUE;
+		entry.IsOpen=safeToOpen;
 	}
 	else
 	{
@@ -888,7 +919,18 @@ Return Value:
 		(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
 			FltObjects->FileObject,
 			&safeToOpen);
+		entry.IsOpen = safeToOpen;
 	}
+	BOOLEAN bRet;
+	ExAcquireFastMutex(&WriteMutex);
+	RtlInsertElementGenericTableAvl(&g_avl_table, &entry, sizeof(AV_GENERIC_TABLE_ENTRY), &bRet);
+	ExReleaseFastMutex(&WriteMutex);
+	if (bRet)
+	{
+		DbgPrint("insert successful!\n");
+	}
+deal:
+	
 	if (!safeToOpen) {
 
 		//
@@ -911,6 +953,7 @@ Return Value:
 		returnStatus = FLT_POSTOP_FINISHED_PROCESSING;
 
 	}
+	
 	//这里是允许创建和打开以后，有写的权限的时候就需要对它设置上下文，进行文件流的扫描。
 	else if (FltObjects->FileObject->WriteAccess) {
 
