@@ -33,6 +33,7 @@ FAST_MUTEX sFunmutex1;
 FAST_MUTEX sFunmutex2;
 FAST_MUTEX WriteMutex;
 ERESOURCE writelock;
+KSPIN_LOCK Spinlock;
 
 //
 //  Structure that contains all the global data structures
@@ -54,7 +55,7 @@ typedef struct _AV_GENERIC_TABLE_ENTRY {
 	BOOLEAN IsOpen; //保存结果
 } AV_GENERIC_TABLE_ENTRY, *PAV_GENERIC_TABLE_ENTRY;
 
-PAV_GENERIC_TABLE_ENTRY p;
+PAV_GENERIC_TABLE_ENTRY pFind;
 const UNICODE_STRING ScannerExtensionsToScan[] =
 { RTL_CONSTANT_STRING(L"doc"),
   RTL_CONSTANT_STRING(L"txt"),
@@ -213,27 +214,7 @@ Return Value:
 	//  to a memcmp on the 128 bit values but that doesn't matter
 	//  here since we just need the tree to be self-consistent.
 	//
-
-	if (lhs->dw_Pid < rhs->dw_Pid) {
-
-		return GenericLessThan;
-
-	}
-	else if (lhs->dw_Pid > rhs->dw_Pid) {
-
-		return GenericGreaterThan;
-
-	}
-    else if (lhs->option < rhs->option) {
-
-        return GenericLessThan;
-
-    }
-    else if (lhs->option > rhs->option) {
-
-        return GenericGreaterThan;
-    }
-	else if ((ULONG64)lhs->hFile > (ULONG64)rhs->hFile)
+	if ((ULONG64)lhs->hFile > (ULONG64)rhs->hFile)
 	{
 		return GenericGreaterThan;
 	}
@@ -348,6 +329,9 @@ Return Value:
 	ExInitializeFastMutex(&sFunmutex2);
 	ExInitializeFastMutex(&WriteMutex);
 	ExInitializeResourceLite(&writelock);
+	KeInitializeSpinLock(&Spinlock);
+	
+	DbgBreakPoint();
 	RtlInitializeGenericTableAvl(&g_avl_table, AvCompareEntry, AvAllocateGenericTableEntry, AvFreeGenericTableEntry, NULL);
 	//
 	//  Register with filter manager.
@@ -553,7 +537,14 @@ Return Value:
 	//
 	//  Unregister the filter
 	//
+	PAV_GENERIC_TABLE_ENTRY p;
+	for (p = RtlEnumerateGenericTableAvl(&g_avl_table, TRUE);
+		p != NULL;
+		p = RtlEnumerateGenericTableAvl(&g_avl_table, FALSE)) {
+		// Process the element pointed to by p
+		RtlDeleteElementGenericTableAvl(&g_avl_table, p);
 
+	}
 	FltUnregisterFilter(ScannerData.Filter);
 	ExDeleteResourceLite(&writelock);
 	return STATUS_SUCCESS;
@@ -753,8 +744,9 @@ Return Value
 //寻找节点
 void FindAvlTable(PVOID StartContext)
 {
+	
 	ExAcquireResourceSharedLite(&writelock, TRUE);
-	p= RtlLookupElementGenericTableAvl(&g_avl_table, (HANDLE)StartContext);
+	pFind= RtlLookupElementGenericTableAvl(&g_avl_table, (HANDLE)StartContext);
 	ExReleaseResourceLite(&writelock);
 }
 
@@ -823,25 +815,26 @@ Return Value:
 	{
 		return FLT_POSTOP_FINISHED_PROCESSING;
 	}
+	entry.hFile = FltObjects->FileObject;
 	//查询链表
 	HANDLE hThread = NULL;
 	PVOID obj;
-	status = PsCreateSystemThread(&hThread, THREAD_ALL_ACCESS, NULL, NULL, NULL,FindAvlTable , FltObjects->FileObject);
+	status = PsCreateSystemThread(&hThread, THREAD_ALL_ACCESS, NULL, NULL, NULL, FindAvlTable, &entry);
 	if (!NT_SUCCESS(status))
 	{
 		DbgPrint("Create Thread error!");
 	}
 	status = ObReferenceObjectByHandle(hThread, THREAD_ALL_ACCESS, NULL, KernelMode, &obj, NULL);
 	KeWaitForSingleObject(obj, Executive, KernelMode, FALSE, NULL);
-	
-	if (p!=NULL)
+
+	if (pFind != NULL)
 	{
-		safeToOpen = p->IsOpen;
-		ExAcquireResourceExclusiveLite(&writelock, TRUE);
-		p = NULL;
-		ExReleaseResourceLite(&writelock);
+		safeToOpen = pFind->IsOpen;
+		ExAcquireSpinLockAtDpcLevel(&Spinlock);
+		pFind = NULL;
+		ExReleaseSpinLockFromDpcLevel(&Spinlock);
 		goto deal;
-		
+
 	}
 	//
 	//  Check if we are interested in this file.
@@ -903,7 +896,7 @@ Return Value:
 	DbgPrint("Process Path: %ws \n", entry.ProcessPath);
 	//获取文件的名称
 	wcsncpy(entry.FilePath, nameInfo->Name.Buffer,MAX_PATH);
-	entry.hFile = FltObjects->FileObject;
+	
 	DbgPrint("File Path:%ws \n", entry.FilePath);
 	
 	FltReleaseFileNameInformation(nameInfo);
@@ -1408,8 +1401,8 @@ Return Value:
 		//
 		//  Read the beginning of the file and pass the contents to user mode.
 		//
-
 		offset.QuadPart = bytesRead = 0;
+		
 		status = FltReadFile(Instance,
 			FileObject,
 			&offset,
@@ -1420,7 +1413,7 @@ Return Value:
 			&bytesRead,
 			NULL,
 			NULL);
-
+	
 		if (NT_SUCCESS(status) && (0 != bytesRead)) {
 
 			notification->BytesToScan = (ULONG)bytesRead;
