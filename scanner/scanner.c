@@ -1591,8 +1591,7 @@ ScannerpSendMessageInUserMode(
 		wcscpy_s(notification->ProcessPath, MAX_PATH, entry.ProcessPath );
 		wcscpy_s(notification->FilePath, MAX_PATH, entry.FilePath);
         
-        ExAcquireResourceExclusiveLite(&g_writelock,TRUE);
-        KeEnterCriticalRegion();
+       
 		status = FltSendMessage(ScannerData.Filter,
 			&ScannerData.ClientPort,
 			notification,//request
@@ -1600,14 +1599,15 @@ ScannerpSendMessageInUserMode(
 			notification,//reply
 			&replyLength,
 			NULL);
-        KeLeaveCriticalRegion();
-        ExReleaseResourceLite(&g_writelock);
+       
        
 
 		if (STATUS_SUCCESS == status) {
-
+			ExAcquireResourceExclusiveLite(&g_writelock, TRUE);
+			KeEnterCriticalRegion();
 			*SafeToOpen = ((PSCANNER_REPLY)notification)->SafeToOpen;
-
+			KeLeaveCriticalRegion();
+			ExReleaseResourceLite(&g_writelock);
 		}
 		else {
 
@@ -1621,8 +1621,6 @@ ScannerpSendMessageInUserMode(
 
 	}
 	finally{
-
-	
 
 	 if (NULL != notification) {
 
