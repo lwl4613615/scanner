@@ -25,15 +25,11 @@ Environment:
 #include "..\\inc\\scanuk.h"
 #include "scanner.h"
 #include "misc.h"
-
 #include <ntddk.h>
 
 #pragma prefast(disable:__WARNING_ENCODE_MEMBER_FUNCTION_POINTER, "Not valid for kernel mode drivers")
-FAST_MUTEX sFunmutex1;
-FAST_MUTEX sFunmutex2;
-FAST_MUTEX WriteMutex;
-ERESOURCE writelock;
-KSPIN_LOCK Spinlock;
+KGUARDED_MUTEX g_mutex;
+ERESOURCE g_writelock;
 
 //
 //  Structure that contains all the global data structures
@@ -325,11 +321,8 @@ Return Value:
 	NTSTATUS status;
 
 	UNREFERENCED_PARAMETER(RegistryPath);
-	ExInitializeFastMutex(&sFunmutex1);
-	ExInitializeFastMutex(&sFunmutex2);
-	ExInitializeFastMutex(&WriteMutex);
-	ExInitializeResourceLite(&writelock);
-	KeInitializeSpinLock(&Spinlock);
+    KeInitializeGuardedMutex(&g_mutex);
+    ExInitializeResourceLite(&g_writelock);
 	
 	DbgBreakPoint();
 	RtlInitializeGenericTableAvl(&g_avl_table, AvCompareEntry, AvAllocateGenericTableEntry, AvFreeGenericTableEntry, NULL);
@@ -546,7 +539,7 @@ Return Value:
 
 	}
 	FltUnregisterFilter(ScannerData.Filter);
-	ExDeleteResourceLite(&writelock);
+    ExDeleteResourceLite(&g_writelock);
 	return STATUS_SUCCESS;
 }
 
@@ -676,9 +669,17 @@ Return Value:
 {
 	UNREFERENCED_PARAMETER(FltObjects);
 	UNREFERENCED_PARAMETER(CompletionContext);
-
+    
+    //创建的类型
+    NTSTATUS status;
+    BOOLEAN PopWindow=FALSE;
+    ULONG ulDisposition=0;
+    ULONG ulOption = Data->Iopb->Parameters.Create.Options;
+    PFLT_FILE_NAME_INFORMATION nameInfo;
+    BOOLEAN safeToOpen=TRUE, scanFile=FALSE;
+    FILE_DISPOSITION_INFORMATION  fdi;
 	PAGED_CODE();
-
+    AV_GENERIC_TABLE_ENTRY entry = { 0 };
 	//
 	//  See if this create is being done by our user process.
 	//
@@ -689,7 +690,93 @@ Return Value:
 
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
+    //检测放行行为
+    if (Data->RequestorMode == KernelMode || FltGetRequestorProcessId(Data) == ScannerData.ClientPid || FlagOn(ulOption, FILE_DIRECTORY_FILE) ||
+        FlagOn(FltObjects->FileObject->Flags, FO_VOLUME_OPEN) || FlagOn(Data->Iopb->OperationFlags, SL_OPEN_PAGING_FILE) ||
+        FlagOn(Data->Iopb->IrpFlags, IRP_PAGING_IO) || FlagOn(Data->Iopb->IrpFlags, IRP_SYNCHRONOUS_PAGING_IO)
+        )
+    {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+    //开始获取文件的一些信息
+    entry.hFile = FltObjects->FileObject;
+    //在这里判断我们需要弹窗的操作
+    //这里是在判断如果是创建操作的操作,我们就需要弹窗，允许不允许它弹窗
+    ulDisposition = (Data->Iopb->Parameters.Create.Options >> 24) & 0xFF;
+    if (ulDisposition == FILE_CREATE || ulDisposition == FILE_OVERWRITE || ulDisposition == FILE_OVERWRITE_IF)
+    {
+        PopWindow = TRUE;
+    }
+    status = FltGetFileNameInformation(Data,
+        FLT_FILE_NAME_NORMALIZED |
+        FLT_FILE_NAME_QUERY_DEFAULT,
+        &nameInfo);
 
+    if (!NT_SUCCESS(status)) {
+
+        return FLT_POSTOP_FINISHED_PROCESSING;
+    }
+
+    FltParseFileNameInformation(nameInfo);
+
+    //
+    //  Check if the extension matches the list of extensions we are interested in
+    //
+
+
+    scanFile = ScannerpCheckExtension(&nameInfo->Extension);
+
+
+    //
+    //  Release file name info, we're done with it
+    //
+
+
+
+    if (!scanFile) {
+
+        //
+        //  Not an extension we are interested in
+        //
+
+        return FLT_POSTOP_FINISHED_PROCESSING;
+    }
+    //这里如果是创建操作就要弹窗，允许不允许创建，如果允许创建了，就不需要在扫描文件的文件流，等它关闭的时候
+    //进行数据流的判断，或者对它的MD5，甚至加解密操作。
+
+    //需要判断如果是创建操作，就不进行打开文件，扫描。如果不是创建操作，就进行MD5等查询方法，判断是它是不是一个有问题的文件。
+        //创建打开文件，重命名文件都有的操作
+        //获取进程的路径，
+    UNICODE_STRING us_ProcessPath = { 0 };
+    us_ProcessPath.Buffer = entry.ProcessPath;
+    us_ProcessPath.MaximumLength = sizeof(entry.ProcessPath);
+    GetProcessFullNameByPid(PsGetCurrentProcessId(), &us_ProcessPath);
+    DbgPrint("Process Path: %ws \n", entry.ProcessPath);
+    //获取文件的名称
+    wcsncpy(entry.FilePath, nameInfo->Name.Buffer, MAX_PATH);
+
+    DbgPrint("File Path:%ws \n", entry.FilePath);
+    
+    FltReleaseFileNameInformation(nameInfo);
+   
+    if (PopWindow)
+    {
+        KeAcquireGuardedMutex(&g_mutex);
+        //需要弹窗就是创建操作,1为创建操作
+        (VOID)ScannerpSendMessageInUserMode(FltObjects->Instance, entry, &safeToOpen);
+        KeReleaseGuardedMutex(&g_mutex);
+        entry.IsOpen = safeToOpen;
+    }
+
+    if (!safeToOpen) {
+        DbgPrint("!!! scanner.sys -- Can't Create File precreate !!!\n");
+        fdi.DeleteFile = TRUE;
+        FltSetInformationFile(FltObjects->Instance, FltObjects->FileObject, &fdi, sizeof(FILE_DISPOSITION_INFORMATION), FileDispositionInformation);
+        Data->IoStatus.Status = STATUS_ACCESS_DENIED;
+        Data->IoStatus.Information = 0;
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+   
 	return FLT_PREOP_SUCCESS_WITH_CALLBACK;
 }
 
@@ -745,9 +832,9 @@ Return Value
 void FindAvlTable(PVOID StartContext)
 {
 	
-	ExAcquireResourceSharedLite(&writelock, TRUE);
+	
 	pFind= RtlLookupElementGenericTableAvl(&g_avl_table, (HANDLE)StartContext);
-	ExReleaseResourceLite(&writelock);
+	
 }
 
 FLT_POSTOP_CALLBACK_STATUS
@@ -788,12 +875,12 @@ Return Value:
 	FLT_POSTOP_CALLBACK_STATUS returnStatus = FLT_POSTOP_FINISHED_PROCESSING;
 	PFLT_FILE_NAME_INFORMATION nameInfo;
 	NTSTATUS status;
-	BOOLEAN safeToOpen, scanFile,PopWindow;
-	ULONG ulOption = Data->Iopb->Parameters.Create.Options;
-	FILE_DISPOSITION_INFORMATION  fdi;
-	ULONG ulDisposition;
+	BOOLEAN safeToOpen, scanFile;
     AV_GENERIC_TABLE_ENTRY entry = { 0 };
-	PopWindow = FALSE;
+	
+	
+   
+	
 	UNREFERENCED_PARAMETER(CompletionContext);
 	UNREFERENCED_PARAMETER(Flags);
 	
@@ -807,48 +894,29 @@ Return Value:
 		return FLT_POSTOP_FINISHED_PROCESSING;
 	}
 
-	//检测放行行为
-	if (Data->RequestorMode == KernelMode || FltGetRequestorProcessId(Data) == ScannerData.ClientPid || FlagOn(ulOption, FILE_DIRECTORY_FILE) ||
-		FlagOn(FltObjects->FileObject->Flags, FO_VOLUME_OPEN) || FlagOn(Data->Iopb->OperationFlags, SL_OPEN_PAGING_FILE) ||
-		FlagOn(Data->Iopb->IrpFlags, IRP_PAGING_IO) || FlagOn(Data->Iopb->IrpFlags, IRP_SYNCHRONOUS_PAGING_IO)
-		)
-	{
-		return FLT_POSTOP_FINISHED_PROCESSING;
-	}
-	entry.hFile = FltObjects->FileObject;
-	//查询链表
-	HANDLE hThread = NULL;
-	PVOID obj;
-	status = PsCreateSystemThread(&hThread, THREAD_ALL_ACCESS, NULL, NULL, NULL, FindAvlTable, &entry);
-	if (!NT_SUCCESS(status))
-	{
-		DbgPrint("Create Thread error!");
-	}
-	status = ObReferenceObjectByHandle(hThread, THREAD_ALL_ACCESS, NULL, KernelMode, &obj, NULL);
-	KeWaitForSingleObject(obj, Executive, KernelMode, FALSE, NULL);
 
-	if (pFind != NULL)
-	{
-		safeToOpen = pFind->IsOpen;
-		ExAcquireSpinLockAtDpcLevel(&Spinlock);
-		pFind = NULL;
-		ExReleaseSpinLockFromDpcLevel(&Spinlock);
-		goto deal;
-
-	}
+	
+        //查询链表
+// 		HANDLE hThread = NULL;
+// 		PVOID obj;
+// 		status = PsCreateSystemThread(&hThread, THREAD_ALL_ACCESS, NULL, NULL, NULL, FindAvlTable, &entry);
+// 		if (!NT_SUCCESS(status))
+// 		{
+// 			DbgPrint("Create Thread error!");
+// 		}
+// 		status = ObReferenceObjectByHandle(hThread, THREAD_ALL_ACCESS, NULL, KernelMode, &obj, NULL);
+// 		KeWaitForSingleObject(obj, Executive, KernelMode, FALSE, NULL);
+// 	
+// 		if (pFind != NULL)
+// 		{
+// 			safeToOpen = pFind->IsOpen;
+// 			ExAcquireSpinLockAtDpcLevel(&Spinlock);
+// 			pFind = NULL;
+// 			ExReleaseSpinLockFromDpcLevel(&Spinlock);
+// 		}
 	//
 	//  Check if we are interested in this file.
 	//
-	//在这里判断我们需要弹窗的操作
-	//这里是在判断如果是创建操作的操作,我们就需要弹窗，允许不允许它弹窗
-	ulDisposition = (Data->Iopb->Parameters.Create.Options >> 24) & 0xFF;
-	if (ulDisposition == FILE_CREATE || ulDisposition == FILE_OVERWRITE || ulDisposition == FILE_OVERWRITE_IF)
-	{
-		PopWindow = TRUE;
-	}
-
-
-
 	status = FltGetFileNameInformation(Data,
 		FLT_FILE_NAME_NORMALIZED |
 		FLT_FILE_NAME_QUERY_DEFAULT,
@@ -900,30 +968,23 @@ Return Value:
 	DbgPrint("File Path:%ws \n", entry.FilePath);
 	
 	FltReleaseFileNameInformation(nameInfo);
-	if (PopWindow)
-	{
-		//需要弹窗就是创建操作,1为创建操作
-		(VOID)ScannerpSendMessageInUserMode(FltObjects->Instance,entry,&safeToOpen);
-		entry.IsOpen=safeToOpen;
-	}
-	else
-	{
+	
+	
 		//否则，在这里就是在正常的判断是不是需要打开的操作
 		(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
 			FltObjects->FileObject,
 			&safeToOpen);
 		entry.IsOpen = safeToOpen;
-	}
-	BOOLEAN bRet;
-	ExAcquireFastMutex(&WriteMutex);
-	RtlInsertElementGenericTableAvl(&g_avl_table, &entry, sizeof(AV_GENERIC_TABLE_ENTRY), &bRet);
-	ExReleaseFastMutex(&WriteMutex);
+	
+	BOOLEAN bRet=FALSE;
+	//ExAcquireFastMutex(&WriteMutex);
+	//RtlInsertElementGenericTableAvl(&g_avl_table, &entry, sizeof(AV_GENERIC_TABLE_ENTRY), &bRet);
+	//ExReleaseFastMutex(&WriteMutex);
 	if (bRet)
 	{
 		DbgPrint("insert successful!\n");
 	}
-deal:
-	
+
 	if (!safeToOpen) {
 
 		//
@@ -933,12 +994,7 @@ deal:
 		DbgPrint("!!! scanner.sys -- foul language detected in postcreate !!!\n");		
 
 		//如果是创建操作，我们拒绝了这个创建的操作，还需要删除这个空的文件，否则扫描文件的话，只需要对它进行拒绝访问操作
-		if (PopWindow)
-		{
-			DbgPrint("!!! scanner.sys -- undoing create \n");
-			fdi.DeleteFile = TRUE;
-			FltSetInformationFile(FltObjects->Instance, FltObjects->FileObject, &fdi, sizeof(FILE_DISPOSITION_INFORMATION), FileDispositionInformation);
-		}
+		
 		FltCancelFileOpen(FltObjects->Instance, FltObjects->FileObject);
 		Data->IoStatus.Status = STATUS_ACCESS_DENIED;
 		Data->IoStatus.Information = 0;
@@ -1317,7 +1373,7 @@ Return Value:
 --*/
 
 {
-	ExAcquireFastMutex(&sFunmutex1);
+	
 	NTSTATUS status = STATUS_SUCCESS;
 	PVOID buffer = NULL;
 	ULONG bytesRead;
@@ -1469,7 +1525,7 @@ Return Value:
 		 FltObjectDereference(volume);
 	 }
 	}
-	ExReleaseFastMutex(&sFunmutex1);
+	
 	return status;
 }
 #pragma warning(push)
@@ -1481,9 +1537,8 @@ ScannerpSendMessageInUserMode(
 	__in AV_GENERIC_TABLE_ENTRY entry,
 	__out PBOOLEAN SafeToOpen
 ){
-	ExAcquireFastMutex(&sFunmutex2);
+	
 	NTSTATUS status = STATUS_SUCCESS;
-	PVOID buffer = NULL;
 	ULONG bytesRead;
 	PSCANNER_NOTIFICATION notification = NULL;
 	
@@ -1535,6 +1590,8 @@ ScannerpSendMessageInUserMode(
 		notification->Option = 1;
 		wcscpy_s(notification->ProcessPath, MAX_PATH, entry.ProcessPath );
 		wcscpy_s(notification->FilePath, MAX_PATH, entry.FilePath);
+        
+       
 		status = FltSendMessage(ScannerData.Filter,
 			&ScannerData.ClientPort,
 			notification,//request
@@ -1542,11 +1599,15 @@ ScannerpSendMessageInUserMode(
 			notification,//reply
 			&replyLength,
 			NULL);
+       
+       
 
 		if (STATUS_SUCCESS == status) {
-
+			ExAcquireResourceExclusiveLite(&g_writelock, TRUE);
+			KeEnterCriticalRegion();
 			*SafeToOpen = ((PSCANNER_REPLY)notification)->SafeToOpen;
-
+			KeLeaveCriticalRegion();
+			ExReleaseResourceLite(&g_writelock);
 		}
 		else {
 
@@ -1561,18 +1622,13 @@ ScannerpSendMessageInUserMode(
 	}
 	finally{
 
-	 if (NULL != buffer) {
-
-		 FltFreePoolAlignedWithTag(Instance, buffer, 'nacS');
-	 }
-
 	 if (NULL != notification) {
 
 		 ExFreePoolWithTag(notification, 'nacS');
 	 }
 	 
 	}
-	ExReleaseFastMutex(&sFunmutex2);
+	
 	return status;
 	
 };
