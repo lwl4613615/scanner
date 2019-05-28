@@ -279,7 +279,7 @@ Return Value:
 
 	UNREFERENCED_PARAMETER(Table);
 
-	ExFreePoolWithTag(Entry, 'lwla');
+	ExFreePool(Entry);
 }
 
 
@@ -717,8 +717,11 @@ Return Value:
         return FLT_POSTOP_FINISHED_PROCESSING;
     }
 
-    FltParseFileNameInformation(nameInfo);
-
+    status = FltParseFileNameInformation(nameInfo);
+	if (!NT_SUCCESS(status))
+	{
+		return FLT_PREOP_SUCCESS_WITH_CALLBACK;
+	}
     //
     //  Check if the extension matches the list of extensions we are interested in
     //
@@ -758,13 +761,13 @@ Return Value:
     DbgPrint("File Path:%ws \n", entry.FilePath);
     
     FltReleaseFileNameInformation(nameInfo);
-   
+	
     if (PopWindow)
     {
-        KeAcquireGuardedMutex(&g_mutex);
+        // KeAcquireGuardedMutex(&g_mutex);
         //需要弹窗就是创建操作,1为创建操作
         (VOID)ScannerpSendMessageInUserMode(FltObjects->Instance, entry, &safeToOpen);
-        KeReleaseGuardedMutex(&g_mutex);
+        //KeReleaseGuardedMutex(&g_mutex);
         entry.IsOpen = safeToOpen;
     }
 
@@ -776,7 +779,7 @@ Return Value:
         Data->IoStatus.Information = 0;
         return FLT_PREOP_SUCCESS_NO_CALLBACK;
     }
-   
+	STATUS_ACCESS_DENIED;
 	return FLT_PREOP_SUCCESS_WITH_CALLBACK;
 }
 
@@ -917,6 +920,10 @@ Return Value:
 	//
 	//  Check if we are interested in this file.
 	//
+	if (FltObjects->FileObject==NULL)
+	{
+		return FLT_PREOP_SUCCESS_WITH_CALLBACK;
+	}
 	status = FltGetFileNameInformation(Data,
 		FLT_FILE_NAME_NORMALIZED |
 		FLT_FILE_NAME_QUERY_DEFAULT,
@@ -1319,7 +1326,7 @@ Return Value:
 
 	 if (notification != NULL) {
 
-		 ExFreePoolWithTag(notification, 'nacS');
+		 ExFreePool(notification);
 	 }
 
 	 if (context) {
@@ -1517,7 +1524,7 @@ Return Value:
 
 	 if (NULL != notification) {
 
-		 ExFreePoolWithTag(notification, 'nacS');
+		 ExFreePool(notification);
 	 }
 
 	 if (NULL != volume) {
@@ -1561,7 +1568,7 @@ ScannerpSendMessageInUserMode(
 
 		//申请需要发送的结构体
 		notification = ExAllocatePoolWithTag(NonPagedPool,
-			sizeof(PSCANNER_NOTIFICATION),
+			sizeof(SCANNER_NOTIFICATION),
 			'nacS');
 
 		if (NULL == notification) {
@@ -1569,21 +1576,7 @@ ScannerpSendMessageInUserMode(
 			status = STATUS_INSUFFICIENT_RESOURCES;
 			leave;
 		}
-		//填写这个结构体
-		switch (entry.option)
-		{
-		case 2:
-		{
-
-			break;
-		}
-		case 3:
-		{
-			break;
-		}
-		default:			
-			break; 
-		}
+		
 		//
 		//  Read the beginning of the file and pass the contents to user mode.
 		//
@@ -1591,7 +1584,7 @@ ScannerpSendMessageInUserMode(
 		wcscpy_s(notification->ProcessPath, MAX_PATH, entry.ProcessPath );
 		wcscpy_s(notification->FilePath, MAX_PATH, entry.FilePath);
         
-       
+		
 		status = FltSendMessage(ScannerData.Filter,
 			&ScannerData.ClientPort,
 			notification,//request
@@ -1603,11 +1596,11 @@ ScannerpSendMessageInUserMode(
        
 
 		if (STATUS_SUCCESS == status) {
-			ExAcquireResourceExclusiveLite(&g_writelock, TRUE);
-			KeEnterCriticalRegion();
+			
+		
 			*SafeToOpen = ((PSCANNER_REPLY)notification)->SafeToOpen;
-			KeLeaveCriticalRegion();
-			ExReleaseResourceLite(&g_writelock);
+			
+		
 		}
 		else {
 
@@ -1624,7 +1617,7 @@ ScannerpSendMessageInUserMode(
 
 	 if (NULL != notification) {
 
-		 ExFreePoolWithTag(notification, 'nacS');
+		 ExFreePool(notification);
 	 }
 	 
 	}

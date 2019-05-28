@@ -1,9 +1,19 @@
 #include "stdafx.h"
 #include "qtr3pop.h"
 #include <QFileDialog>
-
-#include <windows.h>
 #include<QMessageBox>
+#include"..\\..\\inc\\scanuk.h"
+#include <fltuser.h>
+#pragma comment(lib,"fltLib.lib")
+#include <user.h>
+#include <windows.h>
+#include <QThread>
+#include <QObject>
+//创建QT线程类
+
+
+
+
 qtr3pop::qtr3pop(QWidget *parent)
 	: QMainWindow(parent)
 {
@@ -17,8 +27,13 @@ qtr3pop::qtr3pop(QWidget *parent)
 		
 }
 
+
+
+
+
 void qtr3pop::ClickStartButton()
 {
+	
 	//获取文件路径
 	QString fileName = QFileDialog::getOpenFileName(NULL,
 		tr("Open Sys File"),
@@ -32,17 +47,17 @@ void qtr3pop::ClickStartButton()
 	filepath = temp1.data();
 	drivername =temp2.data();
 	//加载驱动	
-	qDebug() << filepath << endl;
-	qDebug() << drivername << endl;
-	
-	
 	obj.DeleteDriver(drivername);
 	if (obj.InstallDriver(drivername, filepath, "370020")) {
-		if (obj.StartDriver(drivername)) {
-			QMessageBox::about(NULL, QString::fromLocal8Bit("开启"), QString::fromLocal8Bit("开启成功"));;
+		if (obj.StartDriver(drivername))
+		{
+			QMessageBox::about(NULL, QString::fromLocal8Bit("开启"), QString::fromLocal8Bit("驱动加载成功"));
+			//开始创建线程
+			
+			
 		}
-		
 	}
+	
 }
 
 void qtr3pop::ClickStopButton()
@@ -51,7 +66,8 @@ void qtr3pop::ClickStopButton()
 	
 	if (obj.DeleteDriver(obj.GetDriverName()))
 	{
-		QMessageBox::about(NULL, QString::fromLocal8Bit("关闭"), QString::fromLocal8Bit("关闭成功"));;
+		QMessageBox::about(NULL, QString::fromLocal8Bit("关闭"), QString::fromLocal8Bit("驱动关闭成功"));;
 	}
 	
 }
+

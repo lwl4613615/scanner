@@ -1,8 +1,18 @@
 #pragma once
 
 #include <QtWidgets/QMainWindow>
+
 #include "ui_qtr3pop.h"
 #include "Driver.h"
+
+//
+//  Default and Maximum number of threads.
+//
+
+
+
+
+
 class qtr3pop : public QMainWindow
 {
 	Q_OBJECT

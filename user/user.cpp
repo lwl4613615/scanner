@@ -228,7 +228,7 @@ Return Value
 
 		hr = FilterReplyMessage(Context->Port,
 			(PFILTER_REPLY_HEADER)&replyMessage,
-			sizeof(replyMessage));
+			sizeof(FILTER_REPLY_HEADER)+sizeof(SCANNER_REPLY));
 		//这个时候，执行完上面函数后，驱动中FltSendMessage()返回
 
 		if (SUCCEEDED(hr)) {
