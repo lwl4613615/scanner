@@ -4,6 +4,7 @@
 
 #include "misc.h"
 #include <ntstrsafe.h>
+
 extern HANDLE g_hSystemProcID;
 
 BOOLEAN IsRootDir(WCHAR * dir)
@@ -75,7 +76,7 @@ NTSTATUS QuerySymbolicLink(
 	
 	if (!NT_SUCCESS(status))
 	{
-		ExFreePoolWithTag(LinkTarget->Buffer, 'SOD');
+		ExFreePool(LinkTarget->Buffer);
 		LinkTarget->Buffer = NULL;
 	}
 	
@@ -163,14 +164,14 @@ NTSTATUS
 		{
 			if (linkTarget.Buffer != NULL)
 			{
-				ExFreePoolWithTag(linkTarget.Buffer, 'SOD');
+				ExFreePool(linkTarget.Buffer);
 				linkTarget.Buffer = NULL;
 			}
 
 			break;
 		}
 
-		ExFreePoolWithTag(linkTarget.Buffer, 'SOD');
+		ExFreePool(linkTarget.Buffer);
 		linkTarget.Buffer = NULL;
 	}
 
@@ -703,8 +704,7 @@ NTSTATUS  GetProcessFullNameByPid(HANDLE nPid, PUNICODE_STRING  FullPath)
 
 	// ªÒ»° ZwQueryInformationProcess
 	if (NULL == ZwQueryInformationProcess) {
-		UNICODE_STRING routineName;
-		RtlInitUnicodeString(&routineName, L"ZwQueryInformationProcess");
+		UNICODE_STRING routineName =RTL_CONSTANT_STRING(L"ZwQueryInformationProcess");
 
 		ZwQueryInformationProcess =
 			(ZWQUERYINFORMATIONPROCESS)MmGetSystemRoutineAddress(&routineName);

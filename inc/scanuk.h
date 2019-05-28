@@ -35,7 +35,7 @@ const wchar_t* ScannerPortName = L"\\ScannerPort";
 typedef struct _SCANNER_NOTIFICATION {
 
     ULONG BytesToScan;
-    ULONG Reserved;             // for quad-word alignement of the Contents structure
+ //   ULONG Reserved;             // for quad-word alignement of the Contents structure
     UCHAR Contents[SCANNER_READ_BUFFER_SIZE];
 	ULONG  Option;
 	WCHAR  ProcessPath[MAX_PATH];
