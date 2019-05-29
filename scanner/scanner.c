@@ -1513,7 +1513,7 @@ Return Value:
 				DbgPrint("!!! scanner.sys --- couldn't send message to user-mode to scan file, status 0x%X\n", status);
 			}
 		}
-
+		//OK
 	}
 	finally{
 
