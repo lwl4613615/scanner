@@ -42,6 +42,9 @@
     <ClCompile Include="qtr3pop.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="WorkThread.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -59,6 +62,9 @@
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="qtr3pop.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="WorkThread.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>
