@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <QThread>
 #include <QObject>
+#include "WorkThread.h"
 //创建QT线程类
 
 
@@ -18,13 +19,18 @@ qtr3pop::qtr3pop(QWidget *parent)
 	: QMainWindow(parent)
 {
 	ui.setupUi(this);
-	
+	WorkThread *pWork = new WorkThread();
 
 
 	//点击开始事件
 	connect(ui.btn_start, &QPushButton::clicked, this,&qtr3pop::ClickStartButton);
 	connect(ui.btn_stop, &QPushButton::clicked, this, &qtr3pop::ClickStopButton);
-		
+	connect(ui.btn_test, &QPushButton::clicked, pWork,&WorkThread::CreateConnect);
+	QThread* pthread = new QThread(this);
+	
+	pWork->moveToThread(pthread);
+	pthread->start();
+
 }
 
 

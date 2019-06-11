@@ -25,6 +25,7 @@ public:
     QGridLayout *gridLayout;
     QPushButton *btn_start;
     QPushButton *btn_stop;
+    QPushButton *btn_test;
 
     void setupUi(QMainWindow *qtr3popClass)
     {
@@ -47,6 +48,11 @@ public:
 
         gridLayout->addWidget(btn_stop, 0, 1, 1, 1);
 
+        btn_test = new QPushButton(centralWidget);
+        btn_test->setObjectName(QString::fromUtf8("btn_test"));
+
+        gridLayout->addWidget(btn_test, 1, 0, 1, 1);
+
         qtr3popClass->setCentralWidget(centralWidget);
 
         retranslateUi(qtr3popClass);
@@ -59,6 +65,7 @@ public:
         qtr3popClass->setWindowTitle(QApplication::translate("qtr3popClass", "qtr3pop", nullptr));
         btn_start->setText(QApplication::translate("qtr3popClass", "\345\274\200\345\247\213", nullptr));
         btn_stop->setText(QApplication::translate("qtr3popClass", "\345\201\234\346\255\242", nullptr));
+        btn_test->setText(QApplication::translate("qtr3popClass", "\346\265\213\350\257\225", nullptr));
     } // retranslateUi
 
 };
