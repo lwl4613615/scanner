@@ -4,7 +4,7 @@
 
 #include "ui_qtr3pop.h"
 #include "Driver.h"
-
+#include "WorkThread.h"
 //
 //  Default and Maximum number of threads.
 //
@@ -22,9 +22,11 @@ public:
 private slots:
 	void ClickStartButton();
 	void ClickStopButton();
-
+signals:
+	void beginthread();
 	
 private:
+	WorkThread *pWork;
 	Ui::qtr3popClass ui;
 	Driver obj;
 };
