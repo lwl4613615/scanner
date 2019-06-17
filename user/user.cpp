@@ -199,21 +199,26 @@ Return Value
 		assert(notification->BytesToScan <= SCANNER_READ_BUFFER_SIZE);
 		__analysis_assume(notification->BytesToScan <= SCANNER_READ_BUFFER_SIZE);
 		printf("option: %d\n", notification->Option);
-
-		
-		if (notification->Option==1)
+		switch (notification->Option)
 		{
-			printf("ProcessPath:%ws \n ", notification->ProcessPath);
-			printf("FilePath:%ws \n", notification->FilePath);
-			result = false;
-		}
-		else
+		case 0:
+			//扫描文件
 		{
-
-			//这个地方，可以修改成弹窗的代码:result=PopupWindow(notification);
 			result = ScanBuffer(notification->Contents, notification->BytesToScan);
-			
+			break;
 		}
+		case 1:
+			//创建文件的时候
+		{
+			printf("r3 ProcessPath:%ws \n ", notification->ProcessPath);
+			printf("r3 FilePath:%ws \n", notification->FilePath);
+			result = false;
+			break;
+		}
+		default:
+			break;
+		}			
+		
 		replyMessage.ReplyHeader.Status = 0;
 		replyMessage.ReplyHeader.MessageId = message->MessageHeader.MessageId;
 

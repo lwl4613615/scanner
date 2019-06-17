@@ -1,11 +1,10 @@
 #include "stdafx.h"
 #include "WorkThread.h"
-#include <user.h>
-#include <windows.h>
 #include"..\\..\\inc\\scanuk.h"
 #include <fltuser.h>
 #pragma comment(lib,"fltLib.lib")
-
+#include <user.h>
+#include <windows.h>
 WorkThread::WorkThread()
 {
 }
@@ -60,7 +59,7 @@ void WorkThread::CreateConnect()
 	{
 		threads[i] = CreateThread(NULL,
 			0,
-			(LPTHREAD_START_ROUTINE)ScannerWorker,
+			(LPTHREAD_START_ROUTINE)0,
 			&context,
 			0,
 			&ThreadID);

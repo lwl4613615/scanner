@@ -16,16 +16,18 @@ qtr3pop::qtr3pop(QWidget *parent)
 {
 	ui.setupUi(this);
 	
-	pWork = new WorkThread();
+	//pWork = new WorkThread();
 	
 	
 	//点击开始事件
 	connect(ui.btn_start, &QPushButton::clicked, this,&qtr3pop::ClickStartButton);
 	connect(ui.btn_stop, &QPushButton::clicked, this, &qtr3pop::ClickStopButton);
 	QThread* pthread = new QThread(this);
-	pWork->moveToThread(pthread);
-	pthread->start();
-	connect(this, &qtr3pop::beginthread, pWork, &WorkThread::CreateConnect);
+	enum language{Basic=3,Assembly,Ada=100,Cobol,fortran};
+	qDebug() << Assembly;
+	//pWork->moveToThread(pthread);
+	//pthread->start();
+	//connect(this, &qtr3pop::beginthread, pWork, &WorkThread::CreateConnect);
 	
 }
 
@@ -55,7 +57,7 @@ void qtr3pop::ClickStartButton()
 		{
 			QMessageBox::about(NULL, QString::fromLocal8Bit("开启"), QString::fromLocal8Bit("驱动加载成功"));			
 			//开启弹窗的线程
-			emit beginthread();
+			//emit beginthread();
 		}
 	}	
 	
