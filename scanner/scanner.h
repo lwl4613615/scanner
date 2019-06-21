@@ -157,6 +157,12 @@ ScannerInstanceSetup(
 );
 
 
+FLT_PREOP_CALLBACK_STATUS
+ScannerPreSetInformation(
+	__inout PFLT_CALLBACK_DATA Data,
+	__in PCFLT_RELATED_OBJECTS FltObjects,
+	__deref_out_opt PVOID *CompletionContext
+);
 
 #endif /* __SCANNER_H__ */
 

@@ -210,8 +210,25 @@ Return Value
 		case 1:
 			//创建文件的时候
 		{
-			printf("r3 ProcessPath:%ws \n ", notification->ProcessPath);
-			printf("r3 FilePath:%ws \n", notification->FilePath);
+			printf("r3 CreateProcessPath:%ws \n ", notification->ProcessPath);
+			printf("r3 CreateFilePath:%ws \n", notification->FilePath);
+			result = false;
+			break;
+		}
+		case 2:
+			//创建文件的时候
+		{
+			printf("r3 RenameProcessPath:%ws \n ", notification->ProcessPath);
+			printf("r3 RenameoldFilePath:%ws \n", notification->FilePath);
+			printf("r3 RenamenewFilePath:%ws \n", notification->RenamePath);
+			result = false;
+			break;
+		}
+		case 3:
+			//创建文件的时候
+		{
+			printf("r3 deleteProcessPath:%ws \n ", notification->ProcessPath);
+			printf("r3 deleteFilePath:%ws \n", notification->FilePath);
 			result = false;
 			break;
 		}
