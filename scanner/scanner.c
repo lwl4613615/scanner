@@ -406,6 +406,7 @@ NTSTATUS InsertList(PULONG Size, PUNICODE_STRING Path)
 	{
 		return STATUS_RESOURCE_NOT_OWNED;
 	}
+
 	my_FileRule->ul_PathLength = Size;
 	my_FileRule->us_Path = Path;
 	ExAcquireResourceExclusiveLite(&g_Eresource,TRUE);
@@ -468,7 +469,8 @@ NTSTATUS ScannerPortR3toR0(IN PVOID PortCookie,
 
 		//进行字符串的拷贝操作
 		wcsncpy(un_Path->Buffer,temp->path, *path_size);
-		DbgPrint("rev:%wz \n", un_Path->Buffer);
+		DbgPrint("rev:%ws \n", un_Path->Buffer);
+		
 
 		ExFreePool(path_size);
 		ExFreePool(un_Path->Buffer);
