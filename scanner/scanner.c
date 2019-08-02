@@ -432,35 +432,42 @@ NTSTATUS ScannerPortR3toR0(IN PVOID PortCookie,
 	UNREFERENCED_PARAMETER(ReturnOutputBufferLength);
 	DbgPrint("[mini-filter] R3toR0Message");
 
-	if ((InputBuffer != NULL)&&((PSCANNER_RECV)InputBuffer)->ul_PathLength<=260&&InputBufferLength!=sizeof(SCANNER_RECV)) {
+	if ((InputBuffer != NULL)&&((PSCANNER_RECV)InputBuffer)->ul_PathLength<=260&&InputBufferLength==sizeof(SCANNER_RECV)) {
 
-// 		try {
+ 		try {
 // 			//  Probe and capture input message: the message is raw user mode
 // 			//  buffer, so need to protect with exception handler
-// 			
+		ProbeForRead(InputBuffer, InputBufferLength, sizeof(ULONG));//地址合法性校验
+
+		ProbeForWrite(OutputBuffer, OutputBufferLength, sizeof(ULONG));//地址合法性校验
 // 
-// 		} except(EXCEPTION_EXECUTE_HANDLER) {
-// 
-// 			return GetExceptionCode();
+		} except(EXCEPTION_EXECUTE_HANDLER) {
+
+			return GetExceptionCode();
+		}
+		PSCANNER_RECV temp = (PSCANNER_RECV)InputBuffer;
 		//开始路径的添加
 		PULONG path_size = (PULONG)ExAllocatePoolWithTag(
 			NonPagedPool, sizeof(ULONG), 'lwlz');
 		if (path_size==NULL )
 		{
 			return STATUS_INSUFFICIENT_RESOURCES;
-		}		
+		}
+		*path_size = temp->ul_PathLength+1;
+		DbgPrint("path_size %d\n", *path_size);
 		PUNICODE_STRING un_Path = (PUNICODE_STRING)ExAllocatePoolWithTag(
 			NonPagedPool, sizeof(UNICODE_STRING), 'lwlz');
-		un_Path->Length = (USHORT)(((PSCANNER_RECV)InputBuffer)->ul_PathLength+1) * sizeof(wchar_t);
-		un_Path->MaximumLength = 260 * sizeof(wchar_t);
-		un_Path->Buffer= ExAllocatePoolWithTag(PagedPool, MAX_PATH * sizeof(WCHAR), 'POCU');
+		un_Path->Length = (USHORT)(*path_size) * sizeof(wchar_t);
+		un_Path->MaximumLength = (USHORT)260 * sizeof(wchar_t);
+		un_Path->Buffer= ExAllocatePoolWithTag(PagedPool, 260 * sizeof(WCHAR), 'POCU');
 		if (un_Path->Buffer==NULL)
 		{
 			ExFreePool(path_size);			
 			return STATUS_INSUFFICIENT_RESOURCES;
 		}
+
 		//进行字符串的拷贝操作
-		wcsncpy_s(un_Path->Buffer, 260, ((PSCANNER_RECV)InputBuffer)->path, ((PSCANNER_RECV)InputBuffer)->ul_PathLength + 1);
+		wcsncpy(un_Path->Buffer,temp->path, *path_size);
 		DbgPrint("rev:%wz \n", un_Path->Buffer);
 
 		ExFreePool(path_size);
