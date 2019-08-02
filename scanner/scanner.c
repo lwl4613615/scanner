@@ -1,4 +1,4 @@
-/*++
+ï»¿/*++
 
 Copyright (c) 1999-2002  Microsoft Corporation
 
@@ -29,9 +29,10 @@ Environment:
 
 #pragma prefast(disable:__WARNING_ENCODE_MEMBER_FUNCTION_POINTER, "Not valid for kernel mode drivers")
 
-//×ÔĞıËø
+//Ã—Ã”ÃÃ½Ã‹Ã¸
 KSPIN_LOCK g_lock;
-
+LIST_ENTRY g_RuleList;
+ERESOURCE g_Eresource;
 NTKERNELAPI
 UCHAR * PsGetProcessImageFileName(__in PEPROCESS Process);
 //
@@ -46,13 +47,13 @@ SCANNER_DATA ScannerData;
 //
 typedef struct _AV_GENERIC_TABLE_ENTRY {
 
-	HANDLE hFile;  //ÎÄ¼ş¾ä±ú
-	ULONG dw_Pid;   //½ø³ÌPID
-	ULONG option;   //´ò¿ªµÄ·½Ê½
-	WCHAR ProcessPath[MAX_PATH]; //½ø³ÌÂ·¾¶
-	WCHAR FilePath[MAX_PATH];    //ÎÄ¼şÂ·¾¶     
+	HANDLE hFile;  //ÃÃ„Â¼Ã¾Â¾Ã¤Â±Ãº
+	ULONG dw_Pid;   //Â½Ã¸Â³ÃŒPID
+	ULONG option;   //Â´Ã²Â¿ÂªÂµÃ„Â·Â½ÃŠÂ½
+	WCHAR ProcessPath[MAX_PATH]; //Â½Ã¸Â³ÃŒÃ‚Â·Â¾Â¶
+	WCHAR FilePath[MAX_PATH];    //ÃÃ„Â¼Ã¾Ã‚Â·Â¾Â¶     
 	WCHAR RenamePath[MAX_PATH];
-	BOOLEAN IsOpen; //±£´æ½á¹û
+	BOOLEAN IsOpen; //Â±Â£Â´Ã¦Â½Ã¡Â¹Ã»
 } AV_GENERIC_TABLE_ENTRY, *PAV_GENERIC_TABLE_ENTRY;
 
 
@@ -94,23 +95,16 @@ ScannerpScanFileInUserMode(
 	__out PBOOLEAN SafeToOpen
 );
 
-// NTSTATUS
-// ScannerpScanFileInUserMode(
-// 	__in PFLT_INSTANCE Instance,
-// 	__in PFILE_OBJECT FileObject,
-// 	__out PBOOLEAN SafeToOpen
-// );
-// NTSTATUS
-// ScannerpSendMessageInUserMode(
-// 	__in PFLT_INSTANCE Instance,
-// 	__in AV_GENERIC_TABLE_ENTRY entry,
-// 	__out PBOOLEAN SafeToOpen
-// );
+NTSTATUS
+ScannerPortR3toR0(
+	IN PVOID PortCookie,
+	IN PVOID InputBuffer OPTIONAL,
+	IN ULONG InputBufferLength,
+	OUT PVOID OutputBuffer OPTIONAL,
+	IN ULONG OutputBufferLength,
+	OUT PULONG ReturnOutputBufferLength
+);
 
-// NTSTATUS
-// ScannerpSendMessageInUserMode(
-// 	__in AV_GENERIC_TABLE_ENTRY *entry
-// );
 
 BOOLEAN
 ScannerpCheckExtension(
@@ -190,30 +184,11 @@ const FLT_REGISTRATION FilterRegistration = {
 	NULL                                //  NormalizeNameComponent
 };
 
-// 
-// VOID
-// WorkRoute (
-// 	_In_ PFLT_GENERIC_WORKITEM FltWorkItem,
-// 	_In_ PVOID FltObject,
-// 	_In_opt_ PVOID Context
-// 	) {
-// 	UNREFERENCED_PARAMETER(FltObject);
-// 	KIRQL OldIrql;
-// 	KeAcquireSpinLock(&g_lock, &OldIrql);
-// 	PAV_GENERIC_TABLE_ENTRY pEntry=Context; 
-// 	//DbgPrint("test workitem :%ws \n", pEntry->FilePath);
-// 	//¿ªÊ¼µ¯´°
-// 	ScannerpSendMessageInUserMode(pEntry);
-// 
-// 	FltFreeGenericWorkItem(FltWorkItem);
-// 	KeReleaseSpinLock(&g_lock, OldIrql);
-// }
 ////////////////////////////////////////////////////////////////////////////
 //
 //    Filter initialization and unload routines.
 //
 ////////////////////////////////////////////////////////////////////////////
-
 
 NTSTATUS
 DriverEntry(
@@ -247,10 +222,12 @@ Return Value:
 	NTSTATUS status;
 
 	UNREFERENCED_PARAMETER(RegistryPath);
+	ExInitializeResourceLite(&g_Eresource);
 
 	KeInitializeSpinLock(&g_lock);
 	DbgBreakPoint();
-
+	//åˆå§‹åŒ–åŒå‘é“¾è¡¨å¤´éƒ¨
+	InitializeListHead(&g_RuleList);
 	//
 	//  Register with filter manager.
 	//
@@ -291,7 +268,7 @@ Return Value:
 			NULL,
 			ScannerPortConnect,
 			ScannerPortDisconnect,
-			NULL,//×÷Òµ£¬²¹³ä
+			ScannerPortR3toR0,//Ã—Ã·Ã’ÂµÂ£Â¬Â²Â¹Â³Ã¤
 			1);
 		//
 		//  Free the security descriptor in all cases. It is not needed once
@@ -421,6 +398,80 @@ Return value
 
 	ScannerData.UserProcess = NULL;
 }
+NTSTATUS InsertList(PULONG Size, PUNICODE_STRING Path)
+{
+	PSCANNER_FILERULE my_FileRule = (PSCANNER_FILERULE)ExAllocatePoolWithTag(
+		NonPagedPool, sizeof(SCANNER_FILERULE), 'lwlz');
+	if (NULL == my_FileRule)
+	{
+		return STATUS_RESOURCE_NOT_OWNED;
+	}
+	my_FileRule->ul_PathLength = Size;
+	my_FileRule->us_Path = Path;
+	ExAcquireResourceExclusiveLite(&g_Eresource,TRUE);
+	InsertHeadList(&g_RuleList, (PLIST_ENTRY)&my_FileRule->list_Entry);
+	ExReleaseResourceLite(&g_Eresource);
+	return STATUS_SUCCESS;
+	
+};
+
+NTSTATUS ScannerPortR3toR0(IN PVOID PortCookie,
+	IN PVOID InputBuffer OPTIONAL, 
+	IN ULONG InputBufferLength, 
+	OUT PVOID OutputBuffer OPTIONAL,
+	IN ULONG OutputBufferLength, 
+	OUT PULONG ReturnOutputBufferLength)
+{
+	NTSTATUS status=STATUS_SUCCESS;
+
+	PAGED_CODE();
+	
+	UNREFERENCED_PARAMETER(PortCookie);
+	UNREFERENCED_PARAMETER(OutputBufferLength);
+	UNREFERENCED_PARAMETER(OutputBuffer);
+	UNREFERENCED_PARAMETER(ReturnOutputBufferLength);
+	DbgPrint("[mini-filter] R3toR0Message");
+
+	if ((InputBuffer != NULL)&&((PSCANNER_RECV)InputBuffer)->ul_PathLength<=260&&InputBufferLength!=sizeof(SCANNER_RECV)) {
+
+// 		try {
+// 			//  Probe and capture input message: the message is raw user mode
+// 			//  buffer, so need to protect with exception handler
+// 			
+// 
+// 		} except(EXCEPTION_EXECUTE_HANDLER) {
+// 
+// 			return GetExceptionCode();
+		//å¼€å§‹è·¯å¾„çš„æ·»åŠ 
+		PULONG path_size = (PULONG)ExAllocatePoolWithTag(
+			NonPagedPool, sizeof(ULONG), 'lwlz');
+		if (path_size==NULL )
+		{
+			return STATUS_INSUFFICIENT_RESOURCES;
+		}		
+		PUNICODE_STRING un_Path = (PUNICODE_STRING)ExAllocatePoolWithTag(
+			NonPagedPool, sizeof(UNICODE_STRING), 'lwlz');
+		un_Path->Length = (USHORT)(((PSCANNER_RECV)InputBuffer)->ul_PathLength+1) * sizeof(wchar_t);
+		un_Path->MaximumLength = 260 * sizeof(wchar_t);
+		un_Path->Buffer= ExAllocatePoolWithTag(PagedPool, MAX_PATH * sizeof(WCHAR), 'POCU');
+		if (un_Path->Buffer==NULL)
+		{
+			ExFreePool(path_size);			
+			return STATUS_INSUFFICIENT_RESOURCES;
+		}
+		//è¿›è¡Œå­—ç¬¦ä¸²çš„æ‹·è´æ“ä½œ
+		wcsncpy_s(un_Path->Buffer, 260, ((PSCANNER_RECV)InputBuffer)->path, ((PSCANNER_RECV)InputBuffer)->ul_PathLength + 1);
+		DbgPrint("rev:%wz \n", un_Path->Buffer);
+
+		ExFreePool(path_size);
+		ExFreePool(un_Path->Buffer);
+		ExFreePool(un_Path);
+
+		return status;
+	}
+	return status;
+}
+
 
 NTSTATUS
 ScannerUnload(
@@ -449,7 +500,7 @@ Return Value:
 	//
 	//  Close the server port.
 	//
-
+	ExDeleteResourceLite(&g_Eresource);
 	FltCloseCommunicationPort(ScannerData.ServerPort);
 
 	//
@@ -588,7 +639,7 @@ Return Value:
 	UNREFERENCED_PARAMETER(FltObjects);
 	UNREFERENCED_PARAMETER(CompletionContext);
 
-	//´´½¨µÄÀàĞÍ
+	//Â´Â´Â½Â¨ÂµÃ„Ã€Ã ÃÃ
 	NTSTATUS status;
 	BOOLEAN PopWindow = FALSE;
 	ULONG ulDisposition = 0;
@@ -609,7 +660,7 @@ Return Value:
 
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
-	//¼ì²â·ÅĞĞĞĞÎª
+	//Â¼Ã¬Â²Ã¢Â·Ã…ÃÃÃÃÃÂª
 	if (Data->RequestorMode == KernelMode || FltGetRequestorProcessId(Data) == ScannerData.ClientPid || FlagOn(ulOption, FILE_DIRECTORY_FILE) ||
 		FlagOn(FltObjects->FileObject->Flags, FO_VOLUME_OPEN) || FlagOn(Data->Iopb->OperationFlags, SL_OPEN_PAGING_FILE) ||
 		FlagOn(Data->Iopb->IrpFlags, IRP_PAGING_IO) || FlagOn(Data->Iopb->IrpFlags, IRP_SYNCHRONOUS_PAGING_IO)
@@ -617,14 +668,14 @@ Return Value:
 	{
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
-	//¿ªÊ¼»ñÈ¡ÎÄ¼şµÄÒ»Ğ©ĞÅÏ¢
+	//Â¿ÂªÃŠÂ¼Â»Ã±ÃˆÂ¡ÃÃ„Â¼Ã¾ÂµÃ„Ã’Â»ÃÂ©ÃÃ…ÃÂ¢
 	entry.hFile = FltObjects->FileObject;
 	if (entry.hFile == NULL)
 	{
 		return FLT_PREOP_SUCCESS_WITH_CALLBACK;
 	}
-	//ÔÚÕâÀïÅĞ¶ÏÎÒÃÇĞèÒªµ¯´°µÄ²Ù×÷
-	//ÕâÀïÊÇÔÚÅĞ¶ÏÈç¹ûÊÇ´´½¨²Ù×÷µÄ²Ù×÷,ÎÒÃÇ¾ÍĞèÒªµ¯´°£¬ÔÊĞí²»ÔÊĞíËüµ¯´°
+	//Ã”ÃšÃ•Ã¢Ã€Ã¯Ã…ÃÂ¶ÃÃÃ’ÃƒÃ‡ÃÃ¨Ã’ÂªÂµÂ¯Â´Â°ÂµÃ„Â²Ã™Ã—Ã·
+	//Ã•Ã¢Ã€Ã¯ÃŠÃ‡Ã”ÃšÃ…ÃÂ¶ÃÃˆÃ§Â¹Ã»ÃŠÃ‡Â´Â´Â½Â¨Â²Ã™Ã—Ã·ÂµÃ„Â²Ã™Ã—Ã·,ÃÃ’ÃƒÃ‡Â¾ÃÃÃ¨Ã’ÂªÂµÂ¯Â´Â°Â£Â¬Ã”ÃŠÃÃ­Â²Â»Ã”ÃŠÃÃ­Ã‹Ã¼ÂµÂ¯Â´Â°
 	ulDisposition = (Data->Iopb->Parameters.Create.Options >> 24) & 0xFF;
 	if (ulDisposition == FILE_CREATE || ulDisposition == FILE_OVERWRITE || ulDisposition == FILE_OVERWRITE_IF)
 	{
@@ -648,8 +699,8 @@ Return Value:
 	//
 	//  Check if the extension matches the list of extensions we are interested in
 	//
-	   //´´½¨´ò¿ªÎÄ¼ş£¬ÖØÃüÃûÎÄ¼ş¶¼ÓĞµÄ²Ù×÷
-		//»ñÈ¡½ø³ÌµÄÂ·¾¶£¬
+	   //Â´Â´Â½Â¨Â´Ã²Â¿ÂªÃÃ„Â¼Ã¾Â£Â¬Ã–Ã˜ÃƒÃ¼ÃƒÃ»ÃÃ„Â¼Ã¾Â¶Â¼Ã“ÃÂµÃ„Â²Ã™Ã—Ã·
+		//Â»Ã±ÃˆÂ¡Â½Ã¸Â³ÃŒÂµÃ„Ã‚Â·Â¾Â¶Â£Â¬
 
 
 	scanFile = ScannerpCheckExtension(&nameInfo->Extension);
@@ -669,54 +720,23 @@ Return Value:
 
 		return FLT_POSTOP_FINISHED_PROCESSING;
 	}
-	//ÕâÀïÈç¹ûÊÇ´´½¨²Ù×÷¾ÍÒªµ¯´°£¬ÔÊĞí²»ÔÊĞí´´½¨£¬Èç¹ûÔÊĞí´´½¨ÁË£¬¾Í²»ĞèÒªÔÚÉ¨ÃèÎÄ¼şµÄÎÄ¼şÁ÷£¬µÈËü¹Ø±ÕµÄÊ±ºò
-	//½øĞĞÊı¾İÁ÷µÄÅĞ¶Ï£¬»òÕß¶ÔËüµÄMD5£¬ÉõÖÁ¼Ó½âÃÜ²Ù×÷¡£
+	//Ã•Ã¢Ã€Ã¯ÃˆÃ§Â¹Ã»ÃŠÃ‡Â´Â´Â½Â¨Â²Ã™Ã—Ã·Â¾ÃÃ’ÂªÂµÂ¯Â´Â°Â£Â¬Ã”ÃŠÃÃ­Â²Â»Ã”ÃŠÃÃ­Â´Â´Â½Â¨Â£Â¬ÃˆÃ§Â¹Ã»Ã”ÃŠÃÃ­Â´Â´Â½Â¨ÃÃ‹Â£Â¬Â¾ÃÂ²Â»ÃÃ¨Ã’ÂªÃ”ÃšÃ‰Â¨ÃƒÃ¨ÃÃ„Â¼Ã¾ÂµÃ„ÃÃ„Â¼Ã¾ÃÃ·Â£Â¬ÂµÃˆÃ‹Ã¼Â¹Ã˜Â±Ã•ÂµÃ„ÃŠÂ±ÂºÃ²
+	//Â½Ã¸ÃÃÃŠÃ½Â¾ÃÃÃ·ÂµÃ„Ã…ÃÂ¶ÃÂ£Â¬Â»Ã²Ã•ÃŸÂ¶Ã”Ã‹Ã¼ÂµÃ„MD5Â£Â¬Ã‰ÃµÃ–ÃÂ¼Ã“Â½Ã¢ÃƒÃœÂ²Ã™Ã—Ã·Â¡Â£
 
-	//ĞèÒªÅĞ¶ÏÈç¹ûÊÇ´´½¨²Ù×÷£¬¾Í²»½øĞĞ´ò¿ªÎÄ¼ş£¬É¨Ãè¡£Èç¹û²»ÊÇ´´½¨²Ù×÷£¬¾Í½øĞĞMD5µÈ²éÑ¯·½·¨£¬ÅĞ¶ÏÊÇËüÊÇ²»ÊÇÒ»¸öÓĞÎÊÌâµÄÎÄ¼ş¡£
-		//´´½¨´ò¿ªÎÄ¼ş£¬ÖØÃüÃûÎÄ¼ş¶¼ÓĞµÄ²Ù×÷
-		//»ñÈ¡½ø³ÌµÄÂ·¾¶£¬
+	//ÃÃ¨Ã’ÂªÃ…ÃÂ¶ÃÃˆÃ§Â¹Ã»ÃŠÃ‡Â´Â´Â½Â¨Â²Ã™Ã—Ã·Â£Â¬Â¾ÃÂ²Â»Â½Ã¸ÃÃÂ´Ã²Â¿ÂªÃÃ„Â¼Ã¾Â£Â¬Ã‰Â¨ÃƒÃ¨Â¡Â£ÃˆÃ§Â¹Ã»Â²Â»ÃŠÃ‡Â´Â´Â½Â¨Â²Ã™Ã—Ã·Â£Â¬Â¾ÃÂ½Ã¸ÃÃMD5ÂµÃˆÂ²Ã©Ã‘Â¯Â·Â½Â·Â¨Â£Â¬Ã…ÃÂ¶ÃÃŠÃ‡Ã‹Ã¼ÃŠÃ‡Â²Â»ÃŠÃ‡Ã’Â»Â¸Ã¶Ã“ÃÃÃŠÃŒÃ¢ÂµÃ„ÃÃ„Â¼Ã¾Â¡Â£
+		//Â´Â´Â½Â¨Â´Ã²Â¿ÂªÃÃ„Â¼Ã¾Â£Â¬Ã–Ã˜ÃƒÃ¼ÃƒÃ»ÃÃ„Â¼Ã¾Â¶Â¼Ã“ÃÂµÃ„Â²Ã™Ã—Ã·
+		//Â»Ã±ÃˆÂ¡Â½Ã¸Â³ÃŒÂµÃ„Ã‚Â·Â¾Â¶Â£Â¬
 	UNICODE_STRING us_ProcessPath = { 0 };
 	us_ProcessPath.Buffer = entry.ProcessPath;
 	us_ProcessPath.MaximumLength = sizeof(entry.ProcessPath);
 	GetProcessFullNameByPid(PsGetCurrentProcessId(), &us_ProcessPath);
 	entry.option = 1;
 	//	DbgPrint("Process Path: %ws \n", entry.ProcessPath);
-		//»ñÈ¡ÎÄ¼şµÄÃû³Æ
+		//Â»Ã±ÃˆÂ¡ÃÃ„Â¼Ã¾ÂµÃ„ÃƒÃ»Â³Ã†
 
 	wcsncpy(entry.FilePath, nameInfo->Name.Buffer, MAX_PATH);
 	FltReleaseFileNameInformation(nameInfo);
-	//	DbgPrint("File Path:%ws \n", entry.FilePath);
-
-
-	// 	if (PopWindow&&ScannerData.ClientPort!=NULL)
-	// 	{
-	// 		//ÕâÀïÆô¶¯¹¤×÷Ïß³ÌÀ´½øĞĞµ¯´°ÎªÁË±ÜÃâIRQL¼¶±ğ²»Í¬Ôì³ÉµÄÀ¶ÆÁ
-	// 		//³õÊ¼»¯¹¤×÷ÁĞ±í
-	// 		PFLT_GENERIC_WORKITEM pWorkitem = FltAllocateGenericWorkItem();
-	// 		if (pWorkitem==NULL)
-	// 		{
-	// 			DbgPrint("Alloc Workitem failed! INSUFFICIENT_RESOURCE");
-	// 			safeToOpen = TRUE;
-	// 			goto end;
-	// 		}
-	// 		// ¿ªÊ¼²åÈë¹¤×÷µÄÏß³Ì
-	// 		KIRQL OldIrql;
-	// 		KeAcquireSpinLock(&g_lock, &OldIrql);
-	// 		status =  FltQueueGenericWorkItem(pWorkitem, ScannerData.Filter,WorkRoute, CriticalWorkQueue,&entry);
-	// 		if (!NT_SUCCESS(status))
-	// 		{
-	// 			DbgPrint("QueueGenericWorkItem is failed!\n");
-	// 			goto end;
-	// 		}
-	// 		KeReleaseSpinLock(&g_lock, OldIrql);
-	// 		
-	// 		// KeAcquireGuardedMutex(&g_mutex);
-	// 		//ĞèÒªµ¯´°¾ÍÊÇ´´½¨²Ù×÷,1Îª´´½¨²Ù×÷
-	// 		//(VOID)ScannerpSendMessageInUserMode(FltObjects->Instance, entry, &safeToOpen);
-	// 		//KeReleaseGuardedMutex(&g_mutex);
-	// 		//entry.IsOpen = safeToOpen;
-	// 		safeToOpen = entry.IsOpen;
-	// 	}
+	
 	(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
 		FltObjects->FileObject,
 		&entry,
@@ -759,7 +779,7 @@ ScannerPreSetInformation(
 	{
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
-	//¿ªÊ¼»ñÈ¡ÎÄ¼ş²Ù×÷µÄĞÅÏ¢
+	//Â¿ÂªÃŠÂ¼Â»Ã±ÃˆÂ¡ÃÃ„Â¼Ã¾Â²Ã™Ã—Ã·ÂµÃ„ÃÃ…ÃÂ¢
 	entry.hFile = FltObjects->FileObject;
 	if (entry.hFile==NULL)
 	{
@@ -782,19 +802,19 @@ ScannerPreSetInformation(
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 // 
-// 	//ÕâÀïÈç¹ûÊÇ´´½¨²Ù×÷¾ÍÒªµ¯´°£¬ÔÊĞí²»ÔÊĞí´´½¨£¬Èç¹ûÔÊĞí´´½¨ÁË£¬¾Í²»ĞèÒªÔÚÉ¨ÃèÎÄ¼şµÄÎÄ¼şÁ÷£¬µÈËü¹Ø±ÕµÄÊ±ºò
-// 	//½øĞĞÊı¾İÁ÷µÄÅĞ¶Ï£¬»òÕß¶ÔËüµÄMD5£¬ÉõÖÁ¼Ó½âÃÜ²Ù×÷¡£
+// 	//Ã•Ã¢Ã€Ã¯ÃˆÃ§Â¹Ã»ÃŠÃ‡Â´Â´Â½Â¨Â²Ã™Ã—Ã·Â¾ÃÃ’ÂªÂµÂ¯Â´Â°Â£Â¬Ã”ÃŠÃÃ­Â²Â»Ã”ÃŠÃÃ­Â´Â´Â½Â¨Â£Â¬ÃˆÃ§Â¹Ã»Ã”ÃŠÃÃ­Â´Â´Â½Â¨ÃÃ‹Â£Â¬Â¾ÃÂ²Â»ÃÃ¨Ã’ÂªÃ”ÃšÃ‰Â¨ÃƒÃ¨ÃÃ„Â¼Ã¾ÂµÃ„ÃÃ„Â¼Ã¾ÃÃ·Â£Â¬ÂµÃˆÃ‹Ã¼Â¹Ã˜Â±Ã•ÂµÃ„ÃŠÂ±ÂºÃ²
+// 	//Â½Ã¸ÃÃÃŠÃ½Â¾ÃÃÃ·ÂµÃ„Ã…ÃÂ¶ÃÂ£Â¬Â»Ã²Ã•ÃŸÂ¶Ã”Ã‹Ã¼ÂµÃ„MD5Â£Â¬Ã‰ÃµÃ–ÃÂ¼Ã“Â½Ã¢ÃƒÃœÂ²Ã™Ã—Ã·Â¡Â£
 // 
-// 	//ĞèÒªÅĞ¶ÏÈç¹ûÊÇ´´½¨²Ù×÷£¬¾Í²»½øĞĞ´ò¿ªÎÄ¼ş£¬É¨Ãè¡£Èç¹û²»ÊÇ´´½¨²Ù×÷£¬¾Í½øĞĞMD5µÈ²éÑ¯·½·¨£¬ÅĞ¶ÏÊÇËüÊÇ²»ÊÇÒ»¸öÓĞÎÊÌâµÄÎÄ¼ş¡£
-// 		//´´½¨´ò¿ªÎÄ¼ş£¬ÖØÃüÃûÎÄ¼ş¶¼ÓĞµÄ²Ù×÷
-// 		//»ñÈ¡½ø³ÌµÄÂ·¾¶£¬
+// 	//ÃÃ¨Ã’ÂªÃ…ÃÂ¶ÃÃˆÃ§Â¹Ã»ÃŠÃ‡Â´Â´Â½Â¨Â²Ã™Ã—Ã·Â£Â¬Â¾ÃÂ²Â»Â½Ã¸ÃÃÂ´Ã²Â¿ÂªÃÃ„Â¼Ã¾Â£Â¬Ã‰Â¨ÃƒÃ¨Â¡Â£ÃˆÃ§Â¹Ã»Â²Â»ÃŠÃ‡Â´Â´Â½Â¨Â²Ã™Ã—Ã·Â£Â¬Â¾ÃÂ½Ã¸ÃÃMD5ÂµÃˆÂ²Ã©Ã‘Â¯Â·Â½Â·Â¨Â£Â¬Ã…ÃÂ¶ÃÃŠÃ‡Ã‹Ã¼ÃŠÃ‡Â²Â»ÃŠÃ‡Ã’Â»Â¸Ã¶Ã“ÃÃÃŠÃŒÃ¢ÂµÃ„ÃÃ„Â¼Ã¾Â¡Â£
+// 		//Â´Â´Â½Â¨Â´Ã²Â¿ÂªÃÃ„Â¼Ã¾Â£Â¬Ã–Ã˜ÃƒÃ¼ÃƒÃ»ÃÃ„Â¼Ã¾Â¶Â¼Ã“ÃÂµÃ„Â²Ã™Ã—Ã·
+// 		//Â»Ã±ÃˆÂ¡Â½Ã¸Â³ÃŒÂµÃ„Ã‚Â·Â¾Â¶Â£Â¬
 	UNICODE_STRING us_ProcessPath = { 0 };
 	us_ProcessPath.Buffer = entry.ProcessPath;
 	us_ProcessPath.MaximumLength = sizeof(entry.ProcessPath);
 	GetProcessFullNameByPid(PsGetCurrentProcessId(), &us_ProcessPath);
 	wcsncpy(entry.FilePath, nameInfo->Name.Buffer, MAX_PATH);
 	FltReleaseFileNameInformation(nameInfo);
-	//»ñÈ¡²Ù×÷ÀàĞÍ	
+	//Â»Ã±ÃˆÂ¡Â²Ã™Ã—Ã·Ã€Ã ÃÃ	
 	if (Data->Iopb->Parameters.SetFileInformation.FileInformationClass == FileRenameInformation ||
 		Data->Iopb->Parameters.SetFileInformation.FileInformationClass == FileDispositionInformation)
 	{
@@ -964,7 +984,7 @@ Return Value:
 
 
 
-	//²éÑ¯Á´±í
+	//Â²Ã©Ã‘Â¯ÃÂ´Â±Ã­
 // 		HANDLE hThread = NULL;
 // 		PVOID obj;
 // 		status = PsCreateSystemThread(&hThread, THREAD_ALL_ACCESS, NULL, NULL, NULL, FindAvlTable, &entry);
@@ -1024,13 +1044,13 @@ Return Value:
 		return FLT_POSTOP_FINISHED_PROCESSING;
 	}
 
-	//»ñÈ¡½ø³ÌµÄÂ·¾¶£¬
+	//Â»Ã±ÃˆÂ¡Â½Ã¸Â³ÃŒÂµÃ„Ã‚Â·Â¾Â¶Â£Â¬
 	UNICODE_STRING us_ProcessPath = { 0 };
 	us_ProcessPath.Buffer = entry.ProcessPath;
 	us_ProcessPath.MaximumLength = sizeof(entry.ProcessPath);
 	GetProcessFullNameByPid(PsGetCurrentProcessId(), &us_ProcessPath);
 	//DbgPrint("Process Path: %ws \n", entry.ProcessPath);
-	//»ñÈ¡ÎÄ¼şµÄÃû³Æ
+	//Â»Ã±ÃˆÂ¡ÃÃ„Â¼Ã¾ÂµÃ„ÃƒÃ»Â³Ã†
 	wcsncpy(entry.FilePath, nameInfo->Name.Buffer, MAX_PATH);
 
 	//DbgPrint("File Path:%ws \n", entry.FilePath);
@@ -1056,7 +1076,7 @@ Return Value:
 
 		DbgPrint("!!! scanner.sys -- foul language detected in postcreate !!!\n");
 
-		//Èç¹ûÊÇ´´½¨²Ù×÷£¬ÎÒÃÇ¾Ü¾øÁËÕâ¸ö´´½¨µÄ²Ù×÷£¬»¹ĞèÒªÉ¾³ıÕâ¸ö¿ÕµÄÎÄ¼ş£¬·ñÔòÉ¨ÃèÎÄ¼şµÄ»°£¬Ö»ĞèÒª¶ÔËü½øĞĞ¾Ü¾ø·ÃÎÊ²Ù×÷
+		//ÃˆÃ§Â¹Ã»ÃŠÃ‡Â´Â´Â½Â¨Â²Ã™Ã—Ã·Â£Â¬ÃÃ’ÃƒÃ‡Â¾ÃœÂ¾Ã¸ÃÃ‹Ã•Ã¢Â¸Ã¶Â´Â´Â½Â¨ÂµÃ„Â²Ã™Ã—Ã·Â£Â¬Â»Â¹ÃÃ¨Ã’ÂªÃ‰Â¾Â³Ã½Ã•Ã¢Â¸Ã¶Â¿Ã•ÂµÃ„ÃÃ„Â¼Ã¾Â£Â¬Â·Ã±Ã”Ã²Ã‰Â¨ÃƒÃ¨ÃÃ„Â¼Ã¾ÂµÃ„Â»Â°Â£Â¬Ã–Â»ÃÃ¨Ã’ÂªÂ¶Ã”Ã‹Ã¼Â½Ã¸ÃÃÂ¾ÃœÂ¾Ã¸Â·ÃƒÃÃŠÂ²Ã™Ã—Ã·
 
 		FltCancelFileOpen(FltObjects->Instance, FltObjects->FileObject);
 		Data->IoStatus.Status = STATUS_ACCESS_DENIED;
@@ -1066,7 +1086,7 @@ Return Value:
 
 	}
 
-	//ÕâÀïÊÇÔÊĞí´´½¨ºÍ´ò¿ªÒÔºó£¬ÓĞĞ´µÄÈ¨ÏŞµÄÊ±ºò¾ÍĞèÒª¶ÔËüÉèÖÃÉÏÏÂÎÄ£¬½øĞĞÎÄ¼şÁ÷µÄÉ¨Ãè¡£
+	//Ã•Ã¢Ã€Ã¯ÃŠÃ‡Ã”ÃŠÃÃ­Â´Â´Â½Â¨ÂºÃÂ´Ã²Â¿ÂªÃ’Ã”ÂºÃ³Â£Â¬Ã“ÃÃÂ´ÂµÃ„ÃˆÂ¨ÃÃÂµÃ„ÃŠÂ±ÂºÃ²Â¾ÃÃÃ¨Ã’ÂªÂ¶Ã”Ã‹Ã¼Ã‰Ã¨Ã–ÃƒÃ‰ÃÃÃ‚ÃÃ„Â£Â¬Â½Ã¸ÃÃÃÃ„Â¼Ã¾ÃÃ·ÂµÃ„Ã‰Â¨ÃƒÃ¨Â¡Â£
 	else if (FltObjects->FileObject->WriteAccess) {
 
 		//
@@ -1158,7 +1178,7 @@ Return Value:
 	entry.option = 0;
 	if (NT_SUCCESS(status)) {
 
-		if (context->RescanRequired) {//Ğ´¹Ø±Õ
+		if (context->RescanRequired) {//ÃÂ´Â¹Ã˜Â±Ã•
 
 			(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
 				FltObjects->FileObject,
@@ -1521,7 +1541,7 @@ Return Value:
 		switch (entry->option)
 		{
 		case 0:
-			//É¨ÃèÎÄ¼ş
+			//Ã‰Â¨ÃƒÃ¨ÃÃ„Â¼Ã¾
 		{
 			notification->Option = 0;
 			wcscpy_s(notification->ProcessPath, MAX_PATH, entry->ProcessPath);
@@ -1529,7 +1549,7 @@ Return Value:
 			break;
 		}
 		case 1:
-			//ÕâÀïÊÇ´´½¨ÎÄ¼ş
+			//Ã•Ã¢Ã€Ã¯ÃŠÃ‡Â´Â´Â½Â¨ÃÃ„Â¼Ã¾
 		{
 			notification->Option = 1;
 			wcscpy_s(notification->ProcessPath, MAX_PATH, entry->ProcessPath);
@@ -1540,7 +1560,7 @@ Return Value:
 		}
 		case 2:
 		{
-			//ÕâÀïÊÇÖØÃüÃûÎÄ¼ş
+			//Ã•Ã¢Ã€Ã¯ÃŠÃ‡Ã–Ã˜ÃƒÃ¼ÃƒÃ»ÃÃ„Â¼Ã¾
 			notification->Option = 2;
 			wcscpy_s(notification->ProcessPath, MAX_PATH, entry->ProcessPath);
 			//DbgPrint("r0 CreateFile processpath: %ws \n", entry->ProcessPath);
@@ -1593,7 +1613,7 @@ Return Value:
 
 
 
-			//ÔÚÕâÀï½øĞĞÎÄ¼şÊı¾İµÄ¿½±´·¢ËÍµ½R3
+			//Ã”ÃšÃ•Ã¢Ã€Ã¯Â½Ã¸ÃÃÃÃ„Â¼Ã¾ÃŠÃ½Â¾ÃÂµÃ„Â¿Â½Â±Â´Â·Â¢Ã‹ÃÂµÂ½R3
 		sendtor3:
 			replyLength = sizeof(SCANNER_REPLY);
 			status = FltSendMessage(ScannerData.Filter,

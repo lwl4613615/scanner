@@ -92,6 +92,20 @@ typedef struct _SCANNER_CREATE_PARAMS {
 
 #pragma warning(pop)
 
+typedef struct _SCANNER_FILERULE {
+
+	PULONG ul_PathLength;
+	PUNICODE_STRING us_Path;
+	LIST_ENTRY list_Entry;
+
+}SCANNER_FILERULE, * PSCANNER_FILERULE;
+typedef struct _SCANNER_RECV {
+
+	ULONG option;
+	ULONG ul_PathLength;
+	wchar_t path[260];
+
+}SCANNER_RECV, * PSCANNER_RECV;
 
 ///////////////////////////////////////////////////////////////////////////
 //
