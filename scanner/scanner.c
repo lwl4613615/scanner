@@ -429,6 +429,28 @@ NTSTATUS InsertList(ULONG Size, UNICODE_STRING Path)
 	
 };
 
+BOOLEAN RemoveList(UNICODE_STRING Path)
+{
+    LIST_ENTRY* p = NULL;
+    for (p = g_RuleList.Flink; p != &g_RuleList; p = p->Flink)
+    {
+        PSCANNER_FILERULE my_node = CONTAINING_RECORD(p, SCANNER_FILERULE, list_Entry);
+        if (!wcscmp(my_node->us_Path.Buffer,Path.Buffer))
+        {
+           
+            ExAcquireResourceExclusiveLite(&g_Eresource, TRUE);
+            BOOLEAN result = RemoveEntryList(p);
+            ExReleaseResourceLite(&g_Eresource);
+            ExFreePool(my_node->us_Path.Buffer);
+            ExFreePool(my_node);
+            DbgPrint("RemoveList Success");
+            return result;
+        }
+
+    }
+    return FALSE;
+}
+
 NTSTATUS ScannerPortR3toR0(IN PVOID PortCookie,
 	IN PVOID InputBuffer OPTIONAL, 
 	IN ULONG InputBufferLength, 
@@ -465,6 +487,8 @@ NTSTATUS ScannerPortR3toR0(IN PVOID PortCookie,
 		UNICODE_STRING un_Path = {0};
 		un_Path.Length = (USHORT)(Path_size) * sizeof(wchar_t);
 		un_Path.MaximumLength = (USHORT)260 * sizeof(wchar_t);
+        //这里申请的内存会移除链表操作那里进行释放。
+
 		un_Path.Buffer = ExAllocatePoolWithTag(PagedPool, 260 * sizeof(WCHAR), 'POCU');
 		//进行字符串的拷贝操作
 		wcsncpy(un_Path.Buffer, temp->path, Path_size);
@@ -482,6 +506,7 @@ NTSTATUS ScannerPortR3toR0(IN PVOID PortCookie,
 			break;			
 		case 2:
 			//如果是2就进行释放操作
+            RemoveList(un_Path);
 			break;
 		default:
 			break;
@@ -690,7 +715,7 @@ Return Value:
 
 	if (IoThreadToProcess(Data->Thread) == ScannerData.UserProcess) {
 
-		DbgPrint("!!! scanner.sys -- allowing create for trusted process \n");
+		//DbgPrint("!!! scanner.sys -- allowing create for trusted process \n");
 
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
@@ -754,12 +779,7 @@ Return Value:
 
 		return FLT_POSTOP_FINISHED_PROCESSING;
 	}
-	//ÕâÀïÈç¹ûÊÇ´´½¨²Ù×÷¾ÍÒªµ¯´°£¬ÔÊÐí²»ÔÊÐí´´½¨£¬Èç¹ûÔÊÐí´´½¨ÁË£¬¾Í²»ÐèÒªÔÚÉ¨ÃèÎÄ¼þµÄÎÄ¼þÁ÷£¬µÈËü¹Ø±ÕµÄÊ±ºò
-	//½øÐÐÊý¾ÝÁ÷µÄÅÐ¶Ï£¬»òÕß¶ÔËüµÄMD5£¬ÉõÖÁ¼Ó½âÃÜ²Ù×÷¡£
-
-	//ÐèÒªÅÐ¶ÏÈç¹ûÊÇ´´½¨²Ù×÷£¬¾Í²»½øÐÐ´ò¿ªÎÄ¼þ£¬É¨Ãè¡£Èç¹û²»ÊÇ´´½¨²Ù×÷£¬¾Í½øÐÐMD5µÈ²éÑ¯·½·¨£¬ÅÐ¶ÏÊÇËüÊÇ²»ÊÇÒ»¸öÓÐÎÊÌâµÄÎÄ¼þ¡£
-		//´´½¨´ò¿ªÎÄ¼þ£¬ÖØÃüÃûÎÄ¼þ¶¼ÓÐµÄ²Ù×÷
-		//»ñÈ¡½ø³ÌµÄÂ·¾¶£¬
+	
 	UNICODE_STRING us_ProcessPath = { 0 };
 	us_ProcessPath.Buffer = entry.ProcessPath;
 	us_ProcessPath.MaximumLength = sizeof(entry.ProcessPath);
