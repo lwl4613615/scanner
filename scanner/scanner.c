@@ -189,7 +189,20 @@ const FLT_REGISTRATION FilterRegistration = {
 //    Filter initialization and unload routines.
 //
 ////////////////////////////////////////////////////////////////////////////
+BOOLEAN IsMyFilterPath(UNICODE_STRING PatH)
+{
+	LIST_ENTRY* p = NULL;
+	for (p=g_RuleList.Flink;p!=&g_RuleList;p=p->Flink)
+	{
+		PSCANNER_FILERULE my_node= CONTAINING_RECORD(p, SCANNER_FILERULE, list_Entry);	
+		if (PatternMatch(my_node->us_Path.Buffer, PatH.Buffer))
+		{
+			return TRUE;
+		}
 
+	}
+	return FALSE;
+}
 NTSTATUS
 DriverEntry(
 	__in PDRIVER_OBJECT DriverObject,
@@ -398,13 +411,13 @@ Return value
 
 	ScannerData.UserProcess = NULL;
 }
-NTSTATUS InsertList(PULONG Size, PUNICODE_STRING Path)
+NTSTATUS InsertList(ULONG Size, UNICODE_STRING Path)
 {
 	PSCANNER_FILERULE my_FileRule = (PSCANNER_FILERULE)ExAllocatePoolWithTag(
 		NonPagedPool, sizeof(SCANNER_FILERULE), 'lwlz');
 	if (NULL == my_FileRule)
 	{
-		return STATUS_RESOURCE_NOT_OWNED;
+		return STATUS_INSUFFICIENT_RESOURCES;
 	}
 
 	my_FileRule->ul_PathLength = Size;
@@ -447,35 +460,36 @@ NTSTATUS ScannerPortR3toR0(IN PVOID PortCookie,
 			return GetExceptionCode();
 		}
 		PSCANNER_RECV temp = (PSCANNER_RECV)InputBuffer;
-		//开始路径的添加
-		PULONG path_size = (PULONG)ExAllocatePoolWithTag(
-			NonPagedPool, sizeof(ULONG), 'lwlz');
-		if (path_size==NULL )
+		ULONG Path_size = temp->ul_PathLength + 1;
+		DbgPrint("path_size %d\n", Path_size);
+		UNICODE_STRING un_Path = {0};
+		un_Path.Length = (USHORT)(Path_size) * sizeof(wchar_t);
+		un_Path.MaximumLength = (USHORT)260 * sizeof(wchar_t);
+		un_Path.Buffer = ExAllocatePoolWithTag(PagedPool, 260 * sizeof(WCHAR), 'POCU');
+		//进行字符串的拷贝操作
+		wcsncpy(un_Path.Buffer, temp->path, Path_size);
+		DbgPrint("rev:%ws \n", un_Path.Buffer);
+		if (un_Path.Buffer==NULL)
 		{
-			return STATUS_INSUFFICIENT_RESOURCES;
-		}
-		*path_size = temp->ul_PathLength+1;
-		DbgPrint("path_size %d\n", *path_size);
-		PUNICODE_STRING un_Path = (PUNICODE_STRING)ExAllocatePoolWithTag(
-			NonPagedPool, sizeof(UNICODE_STRING), 'lwlz');
-		un_Path->Length = (USHORT)(*path_size) * sizeof(wchar_t);
-		un_Path->MaximumLength = (USHORT)260 * sizeof(wchar_t);
-		un_Path->Buffer= ExAllocatePoolWithTag(PagedPool, 260 * sizeof(WCHAR), 'POCU');
-		if (un_Path->Buffer==NULL)
-		{
-			ExFreePool(path_size);			
 			return STATUS_INSUFFICIENT_RESOURCES;
 		}
 
-		//进行字符串的拷贝操作
-		wcsncpy(un_Path->Buffer,temp->path, *path_size);
-		DbgPrint("rev:%ws \n", un_Path->Buffer);
+		switch (temp->option)
+		{
+		case 1:
+			//如果是1就进行插入操作
+			InsertList(Path_size, un_Path);
+			break;			
+		case 2:
+			//如果是2就进行释放操作
+			break;
+		default:
+			break;
+		}	
 		
 
-		ExFreePool(path_size);
-		ExFreePool(un_Path->Buffer);
-		ExFreePool(un_Path);
-
+		
+		//ExFreePool(un_Path.Buffer);
 		return status;
 	}
 	return status;
@@ -517,6 +531,17 @@ Return Value:
 	//
 	
 	FltUnregisterFilter(ScannerData.Filter);
+	while (!IsListEmpty(&g_RuleList))
+	{
+		//从尾部删除一个元素
+		PLIST_ENTRY pEntry = RemoveTailList(&g_RuleList); //返回删除结构中ListEntry的位置
+		PSCANNER_FILERULE pData = CONTAINING_RECORD(pEntry,
+			SCANNER_FILERULE,
+			list_Entry);
+		KdPrint(("ExFree list:%ws \n", pData->us_Path));
+		ExFreePool(pData->us_Path.Buffer);
+		ExFreePool(pData);
+	}
 
 	return STATUS_SUCCESS;
 }
@@ -744,6 +769,11 @@ Return Value:
 		//»ñÈ¡ÎÄ¼þµÄÃû³Æ
 
 	wcsncpy(entry.FilePath, nameInfo->Name.Buffer, MAX_PATH);
+	if (!IsMyFilterPath(nameInfo->Name))
+	{
+		FltReleaseFileNameInformation(nameInfo);
+		return FLT_PREOP_SUCCESS_WITH_CALLBACK;
+	}
 	FltReleaseFileNameInformation(nameInfo);
 	
 	(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
@@ -822,6 +852,11 @@ ScannerPreSetInformation(
 	us_ProcessPath.MaximumLength = sizeof(entry.ProcessPath);
 	GetProcessFullNameByPid(PsGetCurrentProcessId(), &us_ProcessPath);
 	wcsncpy(entry.FilePath, nameInfo->Name.Buffer, MAX_PATH);
+	if (IsMyFilterPath(nameInfo->Name))
+	{
+		FltReleaseFileNameInformation(nameInfo);
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
 	FltReleaseFileNameInformation(nameInfo);
 	//»ñÈ¡²Ù×÷ÀàÐÍ	
 	if (Data->Iopb->Parameters.SetFileInformation.FileInformationClass == FileRenameInformation ||
@@ -990,27 +1025,8 @@ Return Value:
 
 		return FLT_POSTOP_FINISHED_PROCESSING;
 	}
+	
 
-
-
-	//²éÑ¯Á´±í
-// 		HANDLE hThread = NULL;
-// 		PVOID obj;
-// 		status = PsCreateSystemThread(&hThread, THREAD_ALL_ACCESS, NULL, NULL, NULL, FindAvlTable, &entry);
-// 		if (!NT_SUCCESS(status))
-// 		{
-// 			DbgPrint("Create Thread error!");
-// 		}
-// 		status = ObReferenceObjectByHandle(hThread, THREAD_ALL_ACCESS, NULL, KernelMode, &obj, NULL);
-// 		KeWaitForSingleObject(obj, Executive, KernelMode, FALSE, NULL);
-// 	
-// 		if (pFind != NULL)
-// 		{
-// 			safeToOpen = pFind->IsOpen;
-// 			ExAcquireSpinLockAtDpcLevel(&Spinlock);
-// 			pFind = NULL;
-// 			ExReleaseSpinLockFromDpcLevel(&Spinlock);
-// 		}
 	//
 	//  Check if we are interested in this file.
 	//
@@ -1064,8 +1080,13 @@ Return Value:
 
 	//DbgPrint("File Path:%ws \n", entry.FilePath);
 
+	
+	if (IsMyFilterPath(nameInfo->Name))
+	{
+		FltReleaseFileNameInformation(nameInfo);
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
 	FltReleaseFileNameInformation(nameInfo);
-
 	entry.option = 0;
 
 	(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
