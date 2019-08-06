@@ -192,15 +192,18 @@ const FLT_REGISTRATION FilterRegistration = {
 BOOLEAN IsMyFilterPath(UNICODE_STRING PatH)
 {
 	LIST_ENTRY* p = NULL;
+	
 	for (p=g_RuleList.Flink;p!=&g_RuleList;p=p->Flink)
-	{
+	{		
 		PSCANNER_FILERULE my_node= CONTAINING_RECORD(p, SCANNER_FILERULE, list_Entry);	
 		if (PatternMatch(my_node->us_Path.Buffer, PatH.Buffer))
 		{
+			
 			return TRUE;
 		}
 
 	}
+	
 	return FALSE;
 }
 NTSTATUS
@@ -443,7 +446,7 @@ BOOLEAN RemoveList(UNICODE_STRING Path)
             ExReleaseResourceLite(&g_Eresource);
             ExFreePool(my_node->us_Path.Buffer);
             ExFreePool(my_node);
-            DbgPrint("RemoveList Success");
+            DbgPrint("RemoveList Success \n");
             return result;
         }
 
@@ -872,7 +875,7 @@ ScannerPreSetInformation(
 	us_ProcessPath.MaximumLength = sizeof(entry.ProcessPath);
 	GetProcessFullNameByPid(PsGetCurrentProcessId(), &us_ProcessPath);
 	wcsncpy(entry.FilePath, nameInfo->Name.Buffer, MAX_PATH);
-	if (IsMyFilterPath(nameInfo->Name))
+	if (!IsMyFilterPath(nameInfo->Name))
 	{
 		FltReleaseFileNameInformation(nameInfo);
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
