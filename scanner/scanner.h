@@ -107,6 +107,12 @@ typedef struct _SCANNER_RECV {
 
 }SCANNER_RECV, * PSCANNER_RECV;
 
+typedef struct
+{
+	BOOLEAN Result;
+	PFILE_OBJECT hFile;
+	LIST_ENTRY list_Entry;
+}SCANNER_RESULT,*PSCANNER_RESULT;
 ///////////////////////////////////////////////////////////////////////////
 //
 //  Prototypes for the startup and unload routines used for 

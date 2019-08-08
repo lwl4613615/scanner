@@ -32,6 +32,7 @@ Environment:
 //×ÔÐýËø
 KSPIN_LOCK g_lock;
 LIST_ENTRY g_RuleList;
+LIST_ENTRY g_ResultList;
 ERESOURCE g_Eresource;
 NTKERNELAPI
 UCHAR * PsGetProcessImageFileName(__in PEPROCESS Process);
@@ -244,6 +245,7 @@ Return Value:
 	DbgBreakPoint();
 	//初始化双向链表头部
 	InitializeListHead(&g_RuleList);
+	InitializeListHead(&g_ResultList);
 	//
 	//  Register with filter manager.
 	//
@@ -414,7 +416,58 @@ Return value
 
 	ScannerData.UserProcess = NULL;
 }
-NTSTATUS InsertList(ULONG Size, UNICODE_STRING Path)
+
+NTSTATUS InsertResultList(BOOLEAN Result,PFILE_OBJECT hFile)
+{
+	PSCANNER_RESULT my_FileResult = (PSCANNER_RESULT)ExAllocatePoolWithTag(
+		NonPagedPool, sizeof(SCANNER_RESULT), 'lwlz');
+	if (NULL == my_FileResult)
+	{
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	my_FileResult->Result = Result;
+	my_FileResult->hFile = hFile;
+	ExAcquireResourceExclusiveLite(&g_Eresource, TRUE);
+	InsertHeadList(&g_ResultList, (PLIST_ENTRY)& my_FileResult->list_Entry);
+	ExReleaseResourceLite(&g_Eresource);
+	return STATUS_SUCCESS;
+
+}
+BOOLEAN SearchResultList(PFILE_OBJECT hFile, BOOLEAN* Result)
+{
+	LIST_ENTRY* p = NULL;
+	for (p = g_ResultList.Flink; p != &g_ResultList; p = p->Flink)
+	{
+		PSCANNER_RESULT my_node = CONTAINING_RECORD(p, SCANNER_RESULT, list_Entry);
+		if (my_node->hFile==hFile)
+		{
+			*Result = my_node->Result;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+BOOLEAN RemoveResultList(PFILE_OBJECT hFile)
+{
+	LIST_ENTRY* p = NULL;
+	for (p = g_ResultList.Flink; p != &g_ResultList; p = p->Flink)
+	{
+		PSCANNER_RESULT my_node = CONTAINING_RECORD(p, SCANNER_RESULT, list_Entry);
+		if (my_node->hFile==hFile)
+		{
+			ExAcquireResourceExclusiveLite(&g_Eresource, TRUE);
+			BOOLEAN result = RemoveEntryList(p);
+			ExReleaseResourceLite(&g_Eresource);			
+			ExFreePool(my_node);
+			return result;
+		}
+
+	}
+	return FALSE;
+}
+
+NTSTATUS InsertRuleList(ULONG Size, UNICODE_STRING Path)
 {
 	PSCANNER_FILERULE my_FileRule = (PSCANNER_FILERULE)ExAllocatePoolWithTag(
 		NonPagedPool, sizeof(SCANNER_FILERULE), 'lwlz');
@@ -432,7 +485,7 @@ NTSTATUS InsertList(ULONG Size, UNICODE_STRING Path)
 	
 };
 
-BOOLEAN RemoveList(UNICODE_STRING Path)
+BOOLEAN RemoveRuleList(UNICODE_STRING Path)
 {
     LIST_ENTRY* p = NULL;
     for (p = g_RuleList.Flink; p != &g_RuleList; p = p->Flink)
@@ -505,11 +558,11 @@ NTSTATUS ScannerPortR3toR0(IN PVOID PortCookie,
 		{
 		case 1:
 			//如果是1就进行插入操作
-			InsertList(Path_size, un_Path);
+			InsertRuleList(Path_size, un_Path);
 			break;			
 		case 2:
 			//如果是2就进行释放操作
-            RemoveList(un_Path);
+            RemoveRuleList(un_Path);
 			break;
 		default:
 			break;
@@ -570,7 +623,15 @@ Return Value:
 		ExFreePool(pData->us_Path.Buffer);
 		ExFreePool(pData);
 	}
-
+	while (!IsListEmpty(&g_ResultList))
+	{
+		//从尾部删除一个元素
+		PLIST_ENTRY pEntry = RemoveTailList(&g_ResultList); //返回删除结构中ListEntry的位置
+		PSCANNER_RESULT pData = CONTAINING_RECORD(pEntry,
+			SCANNER_RESULT,
+			list_Entry);		
+		ExFreePool(pData);
+	}
 	return STATUS_SUCCESS;
 }
 
@@ -798,12 +859,16 @@ Return Value:
 		return FLT_PREOP_SUCCESS_WITH_CALLBACK;
 	}
 	FltReleaseFileNameInformation(nameInfo);
-	
-	(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
-		FltObjects->FileObject,
-		&entry,
-		&safeToOpen);
-	entry.IsOpen = safeToOpen;
+	if (!SearchResultList(FltObjects->FileObject, &safeToOpen))
+	{
+		(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
+			FltObjects->FileObject,
+			&entry,
+			&safeToOpen);
+		entry.IsOpen = safeToOpen;
+		InsertResultList(safeToOpen, FltObjects->FileObject);
+	}
+
 
 	if (!safeToOpen) {
 		DbgPrint("!!! scanner.sys -- Can't Create File precreate !!!\n");
@@ -921,10 +986,23 @@ ScannerPreSetInformation(
 
 		
 
-		(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
-			FltObjects->FileObject,
-			&entry,
-			&safeToOpen);
+		if (!SearchResultList(FltObjects->FileObject, &safeToOpen))
+		{
+			(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
+				FltObjects->FileObject,
+				&entry,
+				&safeToOpen);
+			entry.IsOpen = safeToOpen;
+			if (entry.option==2)
+			{
+				RemoveResultList(FltObjects->FileObject);
+				InsertResultList(safeToOpen,Data->Iopb->TargetFileObject);
+			}
+			if (entry.option==3)
+			{
+				RemoveResultList(FltObjects->FileObject);
+			}			
+		}
 		entry.IsOpen = safeToOpen;
 		if (!safeToOpen)
 		{
@@ -1112,15 +1190,16 @@ Return Value:
 	FltReleaseFileNameInformation(nameInfo);
 	entry.option = 0;
 
-	(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
-		FltObjects->FileObject,
-		&entry,
-		&safeToOpen);
-	entry.IsOpen = safeToOpen;
-	//ExAcquireFastMutex(&WriteMutex);
-	//RtlInsertElementGenericTableAvl(&g_avl_table, &entry, sizeof(AV_GENERIC_TABLE_ENTRY), &bRet);
-	//ExReleaseFastMutex(&WriteMutex);
-
+	if (!SearchResultList(FltObjects->FileObject, &safeToOpen))
+	{
+		(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
+			FltObjects->FileObject,
+			&entry,
+			&safeToOpen);
+		entry.IsOpen = safeToOpen;
+		InsertResultList(safeToOpen, FltObjects->FileObject);
+	}		
+	
 	if (!safeToOpen) {
 
 		//
