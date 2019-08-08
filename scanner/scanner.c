@@ -417,7 +417,7 @@ Return value
 	ScannerData.UserProcess = NULL;
 }
 
-NTSTATUS InsertResultList(BOOLEAN Result,PFILE_OBJECT hFile)
+NTSTATUS InsertResultList(BOOLEAN Result,wchar_t * ul_ProcessPath, wchar_t * ul_FilePath)
 {
 	PSCANNER_RESULT my_FileResult = (PSCANNER_RESULT)ExAllocatePoolWithTag(
 		NonPagedPool, sizeof(SCANNER_RESULT), 'lwlz');
@@ -425,21 +425,22 @@ NTSTATUS InsertResultList(BOOLEAN Result,PFILE_OBJECT hFile)
 	{
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
+	wcsncpy(my_FileResult->ProcessPath, ul_ProcessPath, 260);
+	wcsncpy(my_FileResult->FilePath, ul_FilePath, 260);
 	my_FileResult->Result = Result;
-	my_FileResult->hFile = hFile;
 	ExAcquireResourceExclusiveLite(&g_Eresource, TRUE);
 	InsertHeadList(&g_ResultList, (PLIST_ENTRY)& my_FileResult->list_Entry);
 	ExReleaseResourceLite(&g_Eresource);
 	return STATUS_SUCCESS;
 
 }
-BOOLEAN SearchResultList(PFILE_OBJECT hFile, BOOLEAN* Result)
+BOOLEAN SearchResultList(wchar_t*  ul_ProcessPath, wchar_t* ul_FilePath, BOOLEAN* Result)
 {
 	LIST_ENTRY* p = NULL;
 	for (p = g_ResultList.Flink; p != &g_ResultList; p = p->Flink)
 	{
 		PSCANNER_RESULT my_node = CONTAINING_RECORD(p, SCANNER_RESULT, list_Entry);
-		if (my_node->hFile==hFile)
+		if (!wcsncmp(my_node->ProcessPath,ul_ProcessPath,260)&&!wcsncmp(my_node->FilePath,ul_FilePath,260))
 		{
 			*Result = my_node->Result;
 			return TRUE;
@@ -448,13 +449,13 @@ BOOLEAN SearchResultList(PFILE_OBJECT hFile, BOOLEAN* Result)
 	return FALSE;
 }
 
-BOOLEAN RemoveResultList(PFILE_OBJECT hFile)
+BOOLEAN RemoveResultList(wchar_t* ul_ProcessPath, wchar_t* ul_FilePath)
 {
 	LIST_ENTRY* p = NULL;
 	for (p = g_ResultList.Flink; p != &g_ResultList; p = p->Flink)
 	{
 		PSCANNER_RESULT my_node = CONTAINING_RECORD(p, SCANNER_RESULT, list_Entry);
-		if (my_node->hFile==hFile)
+		if (!wcsncmp(my_node->ProcessPath, ul_ProcessPath, 260) && !wcsncmp(my_node->FilePath, ul_FilePath, 260))
 		{
 			ExAcquireResourceExclusiveLite(&g_Eresource, TRUE);
 			BOOLEAN result = RemoveEntryList(p);
@@ -859,16 +860,17 @@ Return Value:
 		return FLT_PREOP_SUCCESS_WITH_CALLBACK;
 	}
 	FltReleaseFileNameInformation(nameInfo);
-	if (!SearchResultList(FltObjects->FileObject, &safeToOpen))
+	if (!SearchResultList(entry.ProcessPath, entry.FilePath, &safeToOpen))
 	{
 		(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
 			FltObjects->FileObject,
 			&entry,
 			&safeToOpen);
 		entry.IsOpen = safeToOpen;
-		InsertResultList(safeToOpen, FltObjects->FileObject);
+		
+		InsertResultList(safeToOpen, entry.ProcessPath, entry.FilePath);
 	}
-
+	
 
 	if (!safeToOpen) {
 		DbgPrint("!!! scanner.sys -- Can't Create File precreate !!!\n");
@@ -982,11 +984,9 @@ ScannerPreSetInformation(
 		default:
 			entry.option = 0;
 			break;
-		}
+		}		
 
-		
-
-		if (!SearchResultList(FltObjects->FileObject, &safeToOpen))
+		if (SearchResultList(entry.ProcessPath, entry.FilePath, &safeToOpen))
 		{
 			(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
 				FltObjects->FileObject,
@@ -995,12 +995,12 @@ ScannerPreSetInformation(
 			entry.IsOpen = safeToOpen;
 			if (entry.option==2)
 			{
-				RemoveResultList(FltObjects->FileObject);
-				InsertResultList(safeToOpen,Data->Iopb->TargetFileObject);
+				RemoveResultList(entry.ProcessPath,entry.FilePath);
+				InsertResultList(safeToOpen,entry.ProcessPath,entry.RenamePath);
 			}
 			if (entry.option==3)
 			{
-				RemoveResultList(FltObjects->FileObject);
+				RemoveResultList(entry.ProcessPath,entry.FilePath);
 			}			
 		}
 		entry.IsOpen = safeToOpen;
@@ -1189,16 +1189,16 @@ Return Value:
 	}
 	FltReleaseFileNameInformation(nameInfo);
 	entry.option = 0;
-
-	if (!SearchResultList(FltObjects->FileObject, &safeToOpen))
+	if (!SearchResultList(entry.ProcessPath, entry.FilePath, &safeToOpen))
 	{
 		(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
 			FltObjects->FileObject,
 			&entry,
 			&safeToOpen);
 		entry.IsOpen = safeToOpen;
-		InsertResultList(safeToOpen, FltObjects->FileObject);
-	}		
+
+		InsertResultList(safeToOpen, entry.ProcessPath, entry.FilePath);
+	}
 	
 	if (!safeToOpen) {
 

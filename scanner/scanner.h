@@ -110,7 +110,8 @@ typedef struct _SCANNER_RECV {
 typedef struct
 {
 	BOOLEAN Result;
-	PFILE_OBJECT hFile;
+	wchar_t ProcessPath[260];
+	wchar_t FilePath[260];
 	LIST_ENTRY list_Entry;
 }SCANNER_RESULT,*PSCANNER_RESULT;
 ///////////////////////////////////////////////////////////////////////////
