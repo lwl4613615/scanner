@@ -440,7 +440,15 @@ BOOLEAN SearchResultList(wchar_t*  ul_ProcessPath, wchar_t* ul_FilePath, BOOLEAN
 	for (p = g_ResultList.Flink; p != &g_ResultList; p = p->Flink)
 	{
 		PSCANNER_RESULT my_node = CONTAINING_RECORD(p, SCANNER_RESULT, list_Entry);
-		if (!wcsncmp(my_node->ProcessPath,ul_ProcessPath,260)&&!wcsncmp(my_node->FilePath,ul_FilePath,260))
+		UNICODE_STRING src;
+		UNICODE_STRING src1;
+		UNICODE_STRING dst;
+		UNICODE_STRING dst1;
+		RtlInitUnicodeString(&src, my_node->ProcessPath);
+		RtlInitUnicodeString(&src1, my_node->FilePath);
+		RtlInitUnicodeString(&dst, ul_ProcessPath);
+		RtlInitUnicodeString(&dst1, ul_FilePath);
+		if (!RtlEqualUnicodeString(&src,&dst,TRUE)&& RtlEqualUnicodeString(&src1, &dst1, TRUE))
 		{
 			*Result = my_node->Result;
 			return TRUE;
@@ -455,15 +463,22 @@ BOOLEAN RemoveResultList(wchar_t* ul_ProcessPath, wchar_t* ul_FilePath)
 	for (p = g_ResultList.Flink; p != &g_ResultList; p = p->Flink)
 	{
 		PSCANNER_RESULT my_node = CONTAINING_RECORD(p, SCANNER_RESULT, list_Entry);
-		if (!wcsncmp(my_node->ProcessPath, ul_ProcessPath, 260) && !wcsncmp(my_node->FilePath, ul_FilePath, 260))
+		UNICODE_STRING src;
+		UNICODE_STRING src1;
+		UNICODE_STRING dst;
+		UNICODE_STRING dst1;
+		RtlInitUnicodeString(&src, my_node->ProcessPath);
+		RtlInitUnicodeString(&src1, my_node->FilePath);
+		RtlInitUnicodeString(&dst, ul_ProcessPath);
+		RtlInitUnicodeString(&dst1, ul_FilePath);
+		if (!RtlEqualUnicodeString(&src, &dst, TRUE) && RtlEqualUnicodeString(&src1, &dst1, TRUE))
 		{
 			ExAcquireResourceExclusiveLite(&g_Eresource, TRUE);
 			BOOLEAN result = RemoveEntryList(p);
-			ExReleaseResourceLite(&g_Eresource);			
+			ExReleaseResourceLite(&g_Eresource);
 			ExFreePool(my_node);
 			return result;
 		}
-
 	}
 	return FALSE;
 }
