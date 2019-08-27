@@ -425,6 +425,7 @@ NTSTATUS InsertResultList(BOOLEAN Result,wchar_t * ul_ProcessPath, wchar_t * ul_
 	{
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
+	DbgPrint("insertResultlist ProcessPath:%ws, FilePath:%ws \n", ul_ProcessPath, ul_FilePath);
 	wcsncpy(my_FileResult->ProcessPath, ul_ProcessPath, 260);
 	wcsncpy(my_FileResult->FilePath, ul_FilePath, 260);
 	my_FileResult->Result = Result;
@@ -448,6 +449,7 @@ BOOLEAN SearchResultList(wchar_t*  ul_ProcessPath, wchar_t* ul_FilePath, BOOLEAN
 		RtlInitUnicodeString(&src1, my_node->FilePath);
 		RtlInitUnicodeString(&dst, ul_ProcessPath);
 		RtlInitUnicodeString(&dst1, ul_FilePath);
+		DbgPrint("Src:%wZ dst:%wZ src1:%wZ dst2:%wZ \n", &src, &dst, &src1, &dst1);
 		if (!RtlEqualUnicodeString(&src,&dst,TRUE)&& RtlEqualUnicodeString(&src1, &dst1, TRUE))
 		{
 			*Result = my_node->Result;
@@ -865,10 +867,11 @@ Return Value:
 	us_ProcessPath.MaximumLength = sizeof(entry.ProcessPath);
 	GetProcessFullNameByPid(PsGetCurrentProcessId(), &us_ProcessPath);
 	entry.option = 1;
-	//	DbgPrint("Process Path: %ws \n", entry.ProcessPath);
+	DbgPrint("Process Path: %ws \n", entry.ProcessPath);
 		//»ñÈ¡ÎÄ¼þµÄÃû³Æ
 
 	wcsncpy(entry.FilePath, nameInfo->Name.Buffer, MAX_PATH);
+	DbgPrint("Process Path: %ws \n", entry.FilePath);
 	if (!IsMyFilterPath(nameInfo->Name))
 	{
 		FltReleaseFileNameInformation(nameInfo);
@@ -1001,7 +1004,7 @@ ScannerPreSetInformation(
 			break;
 		}		
 
-		if (SearchResultList(entry.ProcessPath, entry.FilePath, &safeToOpen))
+		if (!SearchResultList(entry.ProcessPath, entry.FilePath, &safeToOpen))
 		{
 			(VOID)ScannerpScanFileInUserMode(FltObjects->Instance,
 				FltObjects->FileObject,
